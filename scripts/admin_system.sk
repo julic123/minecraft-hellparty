@@ -1,0 +1,75 @@
+options:
+    p: &6[시스템] &f
+    GUI_ADMIN_MAIN: &4[ &c통합 관리자 시스템 &4]
+    GUI_GACHA_MANAGE: &8[ &c기원 목록 관리 &8]
+
+command /상점_어드민:
+    permission: op
+    trigger:
+        open_admin_dashboard(player)
+
+function open_admin_dashboard(p: player):
+    set {_gui} to chest inventory with 3 rows named "{@GUI_ADMIN_MAIN}"
+    loop integers from 0 to 26:
+        set slot loop-value of {_gui} to black stained glass pane named "&8"
+
+    set slot 11 of {_gui} to gold ingot named "&e[ 상점/경제 설정 ]" with lore "&7구매 및 판매 설정" and "" and "&a[클릭] &f이동"
+    set slot 13 of {_gui} to nether star named "&b[ 기원(뽑기) 관리 ]" with lore "&7뽑기 관리" and "" and "&a[클릭] &f이동"
+    set slot 15 of {_gui} to anvil named "&d[ 새 기원 생성 ]" with lore "&7새로운 뽑기 테마 생성" and "" and "&a[클릭] &f생성"
+    open {_gui} to {_p}
+
+on inventory click:
+    if name of event-inventory is "{@GUI_ADMIN_MAIN}":
+        cancel event
+        if clicked slot is 11:
+            make player execute command "/상점관리"
+        else if clicked slot is 13:
+            open_admin_gacha_list(player)
+        else if clicked slot is 15:
+            set {admin.step::%player%} to "CREATE_GACHA_NAME"
+            send "{@p} &e생성할 뽑기의 이름&f을 채팅으로 입력해주세요." to player
+            send "{@p} &7(취소하려면 '취소' 입력)" to player
+            close player's inventory
+
+function open_admin_gacha_list(p: player):
+    set {_gui} to chest inventory with 6 rows named "{@GUI_GACHA_MANAGE}"
+    set {_slot} to 0
+    loop indices of {gacha::list::*}:
+        if {_slot} > 44:
+            exit loop
+        set {_name} to loop-value
+        set {_cost} to {gacha::cost::%{_name}%}
+        set {_item} to end crystal named "&e[ %{_name}% ]"
+        set lore of {_item} to "&f1회 가격: &6%{_cost}%원" and "" and "&a[좌클릭] &f관리" and "&c[Shift+우클릭] &4삭제"
+        set slot {_slot} of {_gui} to {_item}
+        add 1 to {_slot}
+    set slot 49 of {_gui} to arrow named "&c[ 뒤로가기 ]"
+    open {_gui} to {_p}
+
+on inventory click:
+    if name of event-inventory is "{@GUI_GACHA_MANAGE}":
+        cancel event
+        if clicked slot is 49:
+            open_admin_dashboard(player)
+            stop
+
+        # [수정] slot 사용
+        set {_click_item} to slot index of clicked slot of current inventory
+        if {_click_item} is not air:
+            set {_name} to name of {_click_item}
+            replace "&e[ " and " ]" with "" in {_name}
+
+            if click type is right mouse button with shift:
+                delete {gacha::list::%{_name}%}
+                delete {gacha::cost::%{_name}%}
+                delete {gacha::ids::%{_name}%::*}
+                delete {gacha::item::%{_name}%::*}
+                delete {gacha::chance::%{_name}%::*}
+                delete {gacha::rarity::%{_name}%::*}
+                play sound "block.anvil.destroy" to player
+                send "{@p} &c%{_name}%&f 뽑기가 삭제되었습니다." to player
+                open_admin_gacha_list(player)
+                stop
+
+            else if click type is left mouse button:
+                make player execute command "/뽑기관리 %{_name}%"

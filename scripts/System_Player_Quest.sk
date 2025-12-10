@@ -1,0 +1,44 @@
+options:
+    p: &b[User] &f
+
+variables:
+    {pouch::items::*} = air
+
+command /팬티:
+    trigger:
+        set {_gui} to chest inventory with 1 row named "&8[ 보안 컨테이너 ]"
+        loop integers from 0 to 3:
+            set slot loop-value of {_gui} to {pouch::items::%player%::%loop-value%}
+        open {_gui} to player
+
+on inventory close:
+    if name of event-inventory is "&8[ 보안 컨테이너 ]":
+        loop integers from 0 to 3:
+            set {pouch::items::%player%::%loop-value%} to slot loop-value of event-inventory
+        send "{@p} 팬티 저장됨." to player
+
+on death of player:
+    if {in_raid::%victim%} is true:
+        loop all items in victim's inventory:
+            drop loop-item at location of victim
+        clear inventory of victim
+        loop integers from 0 to 3:
+            give {pouch::items::%victim%::%loop-value%} to victim
+
+command /npc소환 <text>:
+    permission: op
+    trigger:
+        # [수정] 무적 설정을 콘솔 명령어로 안전하게 처리
+        execute console command "summon villager %x-coord of player% %y-coord of player% %z-coord of player% {Tags:[""q_npc""],NoAI:1b,Invulnerable:1b,CustomName:'""&e%arg-1%""',CustomNameVisible:1b}"
+
+on right click on entity:
+    if event-entity has scoreboard tag "q_npc":
+        cancel event
+        set {_n} to uncolored display name of event-entity
+        if {_n} contains "프라퍼":
+            send "{@p} 레이드 입장 메뉴 열기" to player
+            # open_raid_menu(player) # System_Raid_Map 에 있다면 연결
+        else if {_n} contains "테라피스트":
+            if {quest::kill::%player%} is not set:
+                set {quest::kill::%player%} to 0
+            send "{@p} 퀘스트 확인: %{quest::kill::%player%}%/5" to player

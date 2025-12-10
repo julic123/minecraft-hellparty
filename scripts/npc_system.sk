@@ -1,0 +1,98 @@
+options:
+    NPC_MINER: &6[광물] &f광부
+    NPC_FARMER: &a[농사] &f농부
+    NPC_FISHER: &b[낚시] &f낚시꾼
+    NPC_TRADER: &d[상점] &f상인
+
+# ==========================================================
+# [1] NPC 소환 명령어 (관리자용)
+# ==========================================================
+command /상점npc [<text>]:
+    permission: op
+    trigger:
+        if arg-1 is not set:
+            send "&c[사용법] /상점npc [광부/농부/낚시꾼/상인]"
+            stop
+            
+        if arg-1 is "광부":
+            set {_name} to "{@NPC_MINER}"
+            set {_job} to "mason"
+            set {_msg} to "&6광부 NPC가 소환되었습니다."
+        else if arg-1 is "농부":
+            set {_name} to "{@NPC_FARMER}"
+            set {_job} to "farmer"
+            set {_msg} to "&a농부 NPC가 소환되었습니다."
+        else if arg-1 is "낚시꾼":
+            set {_name} to "{@NPC_FISHER}"
+            set {_job} to "fisherman"
+            set {_msg} to "&b낚시꾼 NPC가 소환되었습니다."
+        else if arg-1 is "상인":
+            set {_name} to "{@NPC_TRADER}"
+            set {_job} to "librarian"
+            set {_msg} to "&d상인 NPC가 소환되었습니다."
+        else:
+            send "&c존재하지 않는 NPC 종류입니다. (광부, 농부, 낚시꾼, 상인)"
+            stop
+
+        replace all "&" with "§" in {_name}
+        execute console command "execute at %player% run summon villager ~ ~ ~ {CustomName:'""%{_name}%""',CustomNameVisible:1b,NoAI:1b,Silent:1b,Invulnerable:1b,VillagerData:{profession:'minecraft:%{_job}%',level:2}}"
+        send {_msg}
+
+# ==========================================================
+# [2] NPC 삭제 명령어 (관리자용)
+# ==========================================================
+command /npc삭제:
+    permission: op
+    trigger:
+        set {_target} to target entity of player
+        if {_target} is set:
+            if {_target} is a villager:
+                kill {_target}
+                send "&cNPC를 삭제했습니다."
+            else:
+                send "&c주민(NPC)을 바라보고 입력해주세요."
+        else:
+            send "&c삭제할 NPC를 바라봐주세요."
+
+# ==========================================================
+# [3] NPC 상호작용 (상점 열기)
+# ==========================================================
+on right click on entity:
+    if event-entity is not a player:
+        set {_name} to name of event-entity
+        if {_name} is not set:
+            stop
+            
+        replace all "&" and "§" and "f" and "a" and "b" and "c" and "d" and "e" and "0" and "1" and "2" and "3" and "4" and "5" and "6" and "7" and "8" and "9" and "l" and "o" and "n" and "m" and "k" and "r" and "[" and "]" with "" in {_name}
+        replace all " " with "" in {_name}
+        
+        if {_name} contains "광부":
+            cancel event
+            open_user_shop(player, "mining")
+            play sound "entity.villager.trade" to player
+            
+        else if {_name} contains "농부":
+            cancel event
+            open_user_shop(player, "farming")
+            play sound "entity.villager.trade" to player
+            
+        else if {_name} contains "낚시꾼":
+            cancel event
+            open_user_shop(player, "fishing")
+            play sound "entity.villager.trade" to player
+            
+        else if {_name} contains "상인":
+            cancel event
+            open_user_shop(player, "buy")
+            play sound "entity.villager.yes" to player
+
+# ==========================================================
+# [4] NPC 무적 설정 (총기, 폭발 등 모든 데미지 방지)
+# ==========================================================
+on damage:
+    if victim is a villager:
+        set {_name} to name of victim
+        if {_name} is set:
+            # 이름에 특정 키워드가 들어가면 데미지 무효화
+            if {_name} contains "광부" or "농부" or "낚시꾼" or "상인":
+                cancel event

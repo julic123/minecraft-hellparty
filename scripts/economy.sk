@@ -1,0 +1,265 @@
+options:
+    p: &a[경제] &f
+    shop_p: &6[상점] &f
+
+variables:
+    {money::*} = 0
+
+# ==========================================================
+# [1] 자산 관리 (기존 데이터 유지)
+# ==========================================================
+command /돈:
+    aliases: /money
+    trigger:
+        if {money::%player%} is not set:
+            set {money::%player%} to 0
+        send "{@p} 현재 잔액: &e%format({money::%player%})%원"
+
+command /지급돈 <player> <number>:
+    permission: op
+    trigger:
+        add arg-2 to {money::%arg-1%}
+        send "{@p} &e%arg-1%&f님에게 &6%format(arg-2)%원&f을 지급했습니다."
+
+command /뺏기 <player> <number>:
+    permission: op
+    trigger:
+        remove arg-2 from {money::%arg-1%}
+        send "{@p} &e%arg-1%&f님의 돈 &6%format(arg-2)%원&f을 차감했습니다."
+
+command /송금 <player> <number>:
+    aliases: /send
+    trigger:
+        if arg-1 is player:
+            send "{@p} 자신에게 보낼 수 없습니다."
+            stop
+        if arg-2 <= 0:
+            send "{@p} 0원 이하는 보낼 수 없습니다."
+            stop
+        if {money::%player%} < arg-2:
+            send "{@p} 잔액이 부족합니다."
+            stop
+        
+        remove arg-2 from {money::%player%}
+        add arg-2 to {money::%arg-1%}
+        
+        send "{@p} &e%arg-1%&f님에게 &6%format(arg-2)%원&f을 보냈습니다." to player
+        send "{@p} &e%player%&f님이 &6%format(arg-2)%원&f을 보냈습니다." to arg-1
+
+# ==========================================================
+# [2] 수표 시스템
+# ==========================================================
+command /수표 <number>:
+    trigger:
+        if arg-1 <= 0:
+            send "{@p} 1원 이상만 가능합니다."
+            stop
+        if {money::%player%} < arg-1:
+            send "{@p} 잔액 부족."
+            stop
+        remove arg-1 from {money::%player%}
+        give paper named "&e[수표] &6%format(arg-1)%원" with lore "&7우클릭하여 입금" to player
+        send "{@p} 수표 발행 완료."
+
+on right click with paper:
+    if name of player's tool contains "[수표]":
+        set {_name} to name of player's tool
+        set {_val} to uncolored {_name}
+        replace "[수표] " and "원" and "," with "" in {_val}
+        set {_amount} to {_val} parsed as number
+        if {_amount} is set:
+            remove 1 of player's tool from player's inventory
+            add {_amount} to {money::%player%}
+            send "{@p} &e%format({_amount})%원&f 입금 완료." to player
+
+# ==========================================================
+# [3] 상점 관리자 (아이템 등록)
+# ==========================================================
+command /상점관리:
+    permission: op
+    trigger:
+        open_shop_admin(player)
+
+function open_shop_admin(p: player):
+    set {_gui} to chest inventory with 3 rows named "&4[관리] 상점 설정"
+    set slot 10 of {_gui} to iron pickaxe named "&e[ 광물 판매 설정 ]"
+    set slot 12 of {_gui} to wheat named "&a[ 농사 판매 설정 ]"
+    set slot 14 of {_gui} to fishing rod named "&b[ 낚시 판매 설정 ]"
+    set slot 16 of {_gui} to chest named "&d[ 구매소 아이템 설정 ]"
+    open {_gui} to {_p}
+
+on inventory click:
+    if name of event-inventory is "&4[관리] 상점 설정":
+        cancel event
+        if clicked slot is 10:
+            open_shop_editor(player, "mining")
+        else if clicked slot is 12:
+            open_shop_editor(player, "farming")
+        else if clicked slot is 14:
+            open_shop_editor(player, "fishing")
+        else if clicked slot is 16:
+            open_shop_editor(player, "buy")
+
+function open_shop_editor(p: player, type: text):
+    set {_gui} to chest inventory with 6 rows named "&4[설정] %{_type}%"
+    set {temp::shop_edit_type::%{_p}%} to {_type}
+    
+    set {_slot} to 0
+    loop {shop.list::%{_type}%::*}:
+        set {_item} to loop-value
+        set {_price} to {shop.price::%{_type}%::%{_item}%}
+        set lore of {_item} to "&f가격: &e%{_price}%원" and "&c우클릭 삭제"
+        set slot {_slot} of {_gui} to {_item}
+        add 1 to {_slot}
+        
+    set slot 49 of {_gui} to emerald block named "&a[+ 아이템 추가]"
+    open {_gui} to {_p}
+
+on inventory click:
+    if name of event-inventory contains "&4[설정] ":
+        cancel event
+        set {_type} to {temp::shop_edit_type::%player%}
+        
+        if clicked slot is 49:
+            set {shop.admin.mode::%player%} to "REGISTER"
+            send "{@shop_p} 인벤토리 아이템을 클릭하세요." to player
+        else if clicked slot < 45:
+            if click type is right mouse button:
+                # [수정] 인벤토리 슬롯에서 직접 아이템을 가져옴
+                set {_item} to slot index of clicked slot of event-inventory
+                if {_item} is not air:
+                    remove {_item} from {shop.list::%{_type}%::*}
+                    delete {shop.price::%{_type}%::%{_item}%}
+                    open_shop_editor(player, {_type})
+
+on inventory click:
+    if {shop.admin.mode::%player%} is "REGISTER":
+        if clicked inventory is player's inventory:
+            cancel event
+            
+            # [수정] 1 of clicked item 오류 해결: clicked item 대신 slot 내용을 직접 사용
+            set {_slot_idx} to index of clicked slot
+            set {_raw_item} to item in slot {_slot_idx} of player's inventory
+            set {_item} to 1 of {_raw_item}
+            
+            if {_item} is not air:
+                set {shop.temp.item::%player%} to {_item}
+                set {shop.admin.mode::%player%} to "PRICE"
+                send "{@shop_p} 가격을 채팅으로 입력하세요." to player
+                close player's inventory
+
+on chat:
+    if {shop.admin.mode::%player%} is "PRICE":
+        cancel event
+        set {_price} to message parsed as number
+        if {_price} is not set:
+            send "{@shop_p} 숫자만 입력하세요." to player
+            stop
+            
+        set {_type} to {temp::shop_edit_type::%player%}
+        set {_item} to {shop.temp.item::%player%}
+        
+        # 중복 방지 후 추가
+        remove {_item} from {shop.list::%{_type}%::*}
+        add {_item} to {shop.list::%{_type}%::*}
+        set {shop.price::%{_type}%::%{_item}%} to {_price}
+        
+        send "{@shop_p} 등록 완료: %{_price}%원" to player
+        delete {shop.admin.mode::%player%}
+        delete {shop.temp.item::%player%}
+        
+        wait 1 tick
+        open_shop_editor(player, {_type})
+
+# ==========================================================
+# [4] 유저 상점 UI (판매소/구매소)
+# ==========================================================
+command /판매소 <text>:
+    trigger:
+        open_user_shop_gui(player, arg-1)
+
+function open_user_shop_gui(p: player, type: text):
+    if {_type} is "buy":
+        set {_name} to "&8[ &d아이템 구매소 &8]"
+    else:
+        set {_name} to "&8[ &6아이템 판매소 (%{_type}%) &8]"
+        
+    set {_gui} to chest inventory with 6 rows named {_name}
+    set {temp::shop_user_type::%{_p}%} to {_type}
+    
+    set {_slot} to 0
+    loop {shop.list::%{_type}%::*}:
+        set {_item} to loop-value
+        set {_price} to {shop.price::%{_type}%::%{_item}%}
+        set {_display} to {_item}
+        
+        if {_type} is "buy":
+            set lore of {_display} to "&f구매가: &c%{_price}%원" and "&e[클릭] 1개 구매" and "&6[Shift+클릭] 10개 구매"
+        else:
+            set lore of {_display} to "&f판매가: &a%{_price}%원" and "&e[클릭] 1개 판매" and "&6[Shift+클릭] 10개 판매"
+            
+        set slot {_slot} of {_gui} to {_display}
+        add 1 to {_slot}
+        
+    open {_gui} to {_p}
+
+on inventory click:
+    if name of event-inventory contains "아이템 구매소" or "아이템 판매소":
+        cancel event
+        if clicked inventory is not current inventory:
+            stop
+            
+        set {_type} to {temp::shop_user_type::%player%}
+        set {_targetItem} to slot index of clicked slot of event-inventory
+        if {_targetItem} is air:
+            stop
+            
+        set {_idx} to index of clicked slot + 1
+        set {_realItem} to {shop.list::%{_type}%::%{_idx}%}
+        set {_price} to {shop.price::%{_type}%::%{_realItem}%}
+        
+        if "%click type%" contains "SHIFT":
+            set {_amount} to 10
+        else:
+            set {_amount} to 1
+            
+        # [구매]
+        if {_type} is "buy":
+            set {_cost} to {_price} * {_amount}
+            if {money::%player%} < {_cost}:
+                send "{@shop_p} 돈이 부족합니다." to player
+                stop
+            if player can't hold {_amount} of {_realItem}:
+                send "{@shop_p} 인벤토리 공간 부족." to player
+                stop
+                
+            remove {_cost} from {money::%player%}
+            give {_amount} of {_realItem} to player
+            send "{@shop_p} 구매 완료 (-%format({_cost})%원)" to player
+            
+        # [판매]
+        else:
+            if amount of {_realItem} in player's inventory < {_amount}:
+                send "{@shop_p} 아이템이 부족합니다." to player
+                stop
+                
+            remove {_amount} of {_realItem} from player's inventory
+            set {_earn} to {_price} * {_amount}
+            add {_earn} to {money::%player%}
+            send "{@shop_p} 판매 완료 (+%format({_earn})%원)" to player
+
+# ==========================================================
+# [5] NPC 시스템 호환용 함수
+# ==========================================================
+function open_user_shop(p: player, type: text):
+    open_user_shop_gui({_p}, {_type})
+
+# ==========================================================
+# [6] 유틸리티
+# ==========================================================
+function format(n: number) :: text:
+    set {_s} to "%{_n}%"
+    loop floor(length of {_s} / 3) times:
+        if length of {_s} > 3:
+            set {_s} to "%subtext of {_s} from 1 to length of {_s}-3%,%subtext of {_s} from length of {_s}-2 to length of {_s}%"
+    return {_s}
