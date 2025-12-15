@@ -1167,6 +1167,21 @@ on inventory click:
             stop
 
     # ---------------- PLAYER INVENTORY (SYSTEM ONLY) ----------------
+        set {_it} to event-item
+        if {_it} is not set:
+            stop
+        if {_it} is air:
+            stop
+
+        set {_u} to uuid of player
+        set {_s} to index of event-slot
+
+        give {_it} to player
+        set slot {_s} of event-inventory to air
+        send "{@p} 아이템을 회수했습니다." to player
+        stop
+
+    # ---------------- PLAYER INVENTORY (SYSTEM ONLY) ----------------
     if clicked inventory is player's inventory:
         if bag_is_in_system(player) is false:
             stop
