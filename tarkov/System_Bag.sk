@@ -13,6 +13,9 @@
 
 options:
     p: &3[가방] &f
+    # SIMPLE_ARMOR_LOCK true: 갑옷/가방/보컨 슬롯만 제한하고 나머지는 전부 허용 (Tarkov GUI 흉내 최소화)
+    SIMPLE_ARMOR_LOCK: false
+    STASH_SCRIPT_MAX_STACK: 1
     SECURE_GUI_TITLE: &8[ 보안 컨테이너 ]
     STASH_GUI_TITLE: &8[ 스태쉬 ]
     WILD_GUI_TITLE: &8[ 야생 보관함 ]
@@ -35,6 +38,10 @@ on load:
         set {bag::expand::T2} to 6
         set {bag::expand::T3} to 9
         set {bag::expand::T4} to 12
+
+    # 옵션 캐시 (상수 경고 회피)
+    set {bag::opt_simple_armor_lock} to {@SIMPLE_ARMOR_LOCK}
+    set {bag::opt_script_max_stack} to {@STASH_SCRIPT_MAX_STACK}
 
     if {bag::secure::size::T1} is not set:
         set {bag::secure::size::T1} to 4
@@ -468,6 +475,31 @@ function bag_classify(it: item) :: text:
 
     return "WILD_ONLY"
 
+function bag_stash_can_store(it: item) :: boolean:
+    if bag_is_script_item({_it}) is true:
+        return true
+    if bag_is_tacz_item({_it}) is true:
+        return true
+    return false
+
+function bag_stash_can_withdraw(p: player, it: item) :: boolean:
+    if bag_is_in_system({_p}) is true:
+        return true
+    if bag_is_tacz_item({_it}) is true:
+        return true
+    return false
+
+function bag_get_script_stack_limit() :: number:
+    if {bag::opt_script_max_stack} is set:
+        if {bag::opt_script_max_stack} > 0:
+            return {bag::opt_script_max_stack}
+    return 1
+
+function bag_simple_lock_enabled() :: boolean:
+    if {bag::opt_simple_armor_lock} is true:
+        return true
+    return false
+
 # 타르코프 진입 시: 야생 전용(WILD_ONLY)만 야생보관함으로 자동 보관
 function bag_should_store_in_wild(it: item) :: boolean:
     if {_it} is air:
@@ -496,15 +528,42 @@ function bag_stash_add_item(p: player, it: item) :: boolean:
     if {_size} is not set:
         set {_size} to 54
 
+    if bag_stash_can_store({_it}) is false:
+        return false
+
+    set {_empty::*} to ""
     loop integers from 0 to ({_size} - 1):
         set {_idx} to loop-value
         if {bag::stash::%{_u}%::%{_idx}%} is not set:
-            set {bag::stash::%{_u}%::%{_idx}%} to {_it}
-            return true
-        if {bag::stash::%{_u}%::%{_idx}%} is air:
-            set {bag::stash::%{_u}%::%{_idx}%} to {_it}
-            return true
-    return false
+            add {_idx} to {_empty::*}
+        else if {bag::stash::%{_u}%::%{_idx}%} is air:
+            add {_idx} to {_empty::*}
+
+    set {_needed} to 1
+    if bag_is_script_item({_it}) is true:
+        set {_limit} to bag_get_script_stack_limit()
+        set {_needed} to (amount of {_it} + {_limit} - 1) / {_limit}
+
+    if {_needed} > size of {_empty::*}:
+        return false
+
+    if bag_is_script_item({_it}) is true:
+        set {_remain} to amount of {_it}
+        loop {_empty::*}:
+            if {_remain} <= 0:
+                stop loop
+            set {_stack} to {_it}
+            set {_move} to bag_get_script_stack_limit()
+            if {_move} > {_remain}:
+                set {_move} to {_remain}
+            set amount of {_stack} to {_move}
+            set {bag::stash::%{_u}%::%loop-value%} to {_stack}
+            subtract {_move} from {_remain}
+        return true
+
+    # 일반(TACZ) 아이템은 단일 슬롯에 저장
+    set {bag::stash::%{_u}%::%{_empty::1}%} to {_it}
+    return true
 
 function bag_apply_enter_system(p: player):
     # 야생 → (하이드아웃/레이드) 진입 시
@@ -664,6 +723,24 @@ function bag_is_placeholder(it: item) :: boolean:
 
 function bag_update_placeholders(p: player):
     set {_u} to uuid of {_p}
+
+    if bag_simple_lock_enabled() is true:
+        set {_sec} to slot 8 of {_p}'s inventory
+        if {_sec} is chest:
+            if name of {_sec} contains "보안 컨테이너":
+                stop
+        if {_sec} is air:
+            set slot 8 of {_p}'s inventory to chest named "&6보안 컨테이너" with lore "&7클릭하여 열기" and "&8SECURE_CONTAINER"
+            stop
+        if bag_is_placeholder({_sec}) is true:
+            set slot 8 of {_p}'s inventory to chest named "&6보안 컨테이너" with lore "&7클릭하여 열기" and "&8SECURE_CONTAINER"
+            stop
+
+        set {_empty} to bag_find_empty_base_slot({_p})
+        if {_empty} >= 0:
+            set slot {_empty} of {_p}'s inventory to {_sec}
+            set slot 8 of {_p}'s inventory to chest named "&6보안 컨테이너" with lore "&7클릭하여 열기" and "&8SECURE_CONTAINER"
+        stop
 
     set {_banned::1} to 5
     set {_banned::2} to 6
@@ -1009,6 +1086,11 @@ on respawn:
 # ======================================================
 
 on inventory click:
+    if name of current inventory of player is "{@WILD_GUI_TITLE}":
+        if clicked inventory is player's inventory:
+            cancel event
+            stop
+
     # ---------------- SECURE GUI ----------------
     if name of event-inventory is "{@SECURE_GUI_TITLE}":
         cancel event
@@ -1050,8 +1132,48 @@ on inventory click:
 
         give {_it} to player
         set slot {_s} of event-inventory to air
+        set {_idxVar} to {_s} + 1
+        if {bag::wild::%{_u}%::%{_idxVar}%} is set:
+            delete {bag::wild::%{_u}%::%{_idxVar}%}
         send "{@p} 아이템을 회수했습니다." to player
         stop
+
+    # ---------------- STASH GUI ----------------
+    if name of event-inventory is "{@STASH_GUI_TITLE}":
+        cancel event
+
+        set {_it} to event-item
+        if {_it} is not set:
+            stop
+        if {_it} is air:
+            stop
+
+        set {_s} to index of event-slot
+        set {_u} to uuid of player
+
+        if clicked inventory is player's inventory:
+            if bag_stash_can_store({_it}) is false:
+                send "{@p} 스태쉬에는 타르코프 스크립트 아이템 또는 TACZ 아이템만 넣을 수 있습니다." to player
+                stop
+            if bag_stash_add_item(player, {_it}) is true:
+                set slot {_s} of player's inventory to air
+                send "{@p} 스태쉬에 보관했습니다." to player
+            else:
+                send "{@p} 스태쉬에 빈 공간이 부족합니다." to player
+            stop
+
+        if clicked inventory is event-inventory:
+            if bag_stash_can_withdraw(player, {_it}) is false:
+                send "{@p} 야생에서는 TACZ 아이템만 스태쉬에서 꺼낼 수 있습니다." to player
+                stop
+            set {_empty} to bag_find_empty_any_slot(player)
+            if {_empty} < 0:
+                send "{@p} 인벤토리가 가득 찼습니다." to player
+                stop
+            set slot {_empty} of player's inventory to {_it}
+            set slot {_s} of event-inventory to air
+            send "{@p} 스태쉬에서 아이템을 꺼냈습니다." to player
+            stop
 
     # ---------------- PLAYER INVENTORY (SYSTEM ONLY) ----------------
     if clicked inventory is player's inventory:
@@ -1062,47 +1184,57 @@ on inventory click:
         set {_it} to event-item
         set {_cursor} to cursor slot of player
 
-        # 1) placeholder 이동 방지 + 보컨 클릭
+        # 1) placeholder 고정 + 보컨 클릭 처리
         if {_it} is set:
             if bag_is_placeholder({_it}) is true:
                 cancel event
 
                 if {_s} is 8:
-                    if {_it} is chest:
-                        if name of {_it} contains "보안 컨테이너":
-                            if {_cursor} is not air:
-                                if bag_is_placeholder({_cursor}) is false:
-                                    bag_add_to_secure(player, {_cursor})
-                                    set cursor slot of player to air
-                            else:
-                                bag_open_secure_gui(player)
+                    if {_cursor} is not air:
+                        if bag_is_placeholder({_cursor}) is false:
+                            bag_add_to_secure(player, {_cursor})
+                        set cursor slot of player to air
+                    else:
+                        bag_open_secure_gui(player)
                 stop
+
+        # 2) 금지 슬롯
+        if bag_simple_lock_enabled() is true:
+            # 최소 모드: 갑옷/가방/보컨만 제한
+            if {_s} is 9:
+                if {_cursor} is not air:
+                    if bag_is_script_armor({_cursor}) is false:
+                        cancel event
+                        stop
+            if {_s} is 18:
+                if {_cursor} is not air:
+                    if bag_is_script_bag({_cursor}) is false:
+                        cancel event
+                        stop
+                wait 1 tick
+                bag_update_tier(player)
+                stop
+            if {_s} is 8:
+                cancel event
+                if {_cursor} is not air:
+                    if bag_is_placeholder({_cursor}) is false:
+                        bag_add_to_secure(player, {_cursor})
+                    set cursor slot of player to air
+                else:
+                    bag_open_secure_gui(player)
+                stop
+
+            stop
 
         # 2) 금지 슬롯
         if bag_is_banned_slot({_s}) is true:
             cancel event
-            if {_cursor} is not air:
-                if bag_is_placeholder({_cursor}) is false:
-                    set {_empty} to bag_find_empty_base_slot(player)
-                    if {_empty} >= 0:
-                        set slot {_empty} of player's inventory to {_cursor}
-                        set cursor slot of player to air
-                    else:
-                        send "{@p} 인벤토리가 가득 찼습니다." to player
             stop
 
         # 3) 확장 슬롯 잠금
         if bag_is_expand_slot({_s}) is true:
             if bag_is_slot_unlocked(player, {_s}) is false:
                 cancel event
-                if {_cursor} is not air:
-                    if bag_is_placeholder({_cursor}) is false:
-                        set {_empty} to bag_find_empty_base_slot(player)
-                        if {_empty} >= 0:
-                            set slot {_empty} of player's inventory to {_cursor}
-                            set cursor slot of player to air
-                        else:
-                            send "{@p} 인벤토리가 가득 찼습니다." to player
                 stop
 
         # 4) 갑옷 슬롯
@@ -1110,30 +1242,14 @@ on inventory click:
             if {_cursor} is not air:
                 if bag_is_script_armor({_cursor}) is false:
                     cancel event
-                    if bag_is_placeholder({_cursor}) is false:
-                        set {_empty} to bag_find_empty_base_slot(player)
-                        if {_empty} >= 0:
-                            set slot {_empty} of player's inventory to {_cursor}
-                            set cursor slot of player to air
-                        else:
-                            send "{@p} 스크립트 갑옷만 장착할 수 있습니다." to player
                     stop
 
         # 5) 가방 슬롯 (등급 갱신)
         if {_s} is 18:
-            # 커서로 넣는 경우 검증
             if {_cursor} is not air:
                 if bag_is_script_bag({_cursor}) is false:
                     cancel event
-                    if bag_is_placeholder({_cursor}) is false:
-                        set {_empty} to bag_find_empty_base_slot(player)
-                        if {_empty} >= 0:
-                            set slot {_empty} of player's inventory to {_cursor}
-                            set cursor slot of player to air
-                        else:
-                            send "{@p} 스크립트 가방만 장착할 수 있습니다." to player
                     stop
-            # 어떤 방식이든(넣기/빼기/쉬프트) 1틱 뒤 등급 갱신
             wait 1 tick
             bag_update_tier(player)
             stop
@@ -1144,7 +1260,7 @@ on inventory click:
             if {_cursor} is not air:
                 if bag_is_placeholder({_cursor}) is false:
                     bag_add_to_secure(player, {_cursor})
-                    set cursor slot of player to air
+                set cursor slot of player to air
             else:
                 bag_open_secure_gui(player)
             stop
@@ -1193,12 +1309,7 @@ on inventory close:
 
     # ---------------- WILD GUI SAVE ----------------
     if name of event-inventory is "{@WILD_GUI_TITLE}":
-        set {_u} to uuid of player
-        delete {bag::wild::%{_u}%::*}
-        loop integers from 0 to 53:
-            set {_it} to slot loop-value of event-inventory
-            if {_it} is not air:
-                add {_it} to {bag::wild::%{_u}%::*}
+        # 회수만 가능하도록 별도 저장 처리 없이 종료
         stop
 
 # ======================================================
