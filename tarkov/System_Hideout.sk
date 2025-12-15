@@ -1,0 +1,127 @@
+options:
+    p: &8[하이드아웃] &f
+
+# ======================================================
+# [0] 하이드아웃 구역/스폰 설정
+# - pos1/pos2: 구역 범위(큐보이드)
+# - spawn: /하이드아웃 이동 위치
+# ======================================================
+
+command /하이드아웃:
+    trigger:
+        if {hideout::spawn::world} is not set:
+            send "{@p} 하이드아웃 스폰이 설정되지 않았습니다. (관리자: /하이드아웃스폰설정)" to player
+            stop
+
+        teleport player to location({hideout::spawn::x}, {hideout::spawn::y}, {hideout::spawn::z}, world({hideout::spawn::world}))
+        send "{@p} 하이드아웃으로 이동했습니다." to player
+
+command /하이드아웃pos1:
+    permission: op
+    trigger:
+        set {hideout::pos1::world} to "%world of player%"
+        set {hideout::pos1::x} to x-coordinate of player
+        set {hideout::pos1::y} to y-coordinate of player
+        set {hideout::pos1::z} to z-coordinate of player
+        send "{@p} pos1 설정 완료." to player
+
+command /하이드아웃pos2:
+    permission: op
+    trigger:
+        set {hideout::pos2::world} to "%world of player%"
+        set {hideout::pos2::x} to x-coordinate of player
+        set {hideout::pos2::y} to y-coordinate of player
+        set {hideout::pos2::z} to z-coordinate of player
+        send "{@p} pos2 설정 완료." to player
+
+command /하이드아웃스폰설정:
+    permission: op
+    trigger:
+        set {hideout::spawn::world} to "%world of player%"
+        set {hideout::spawn::x} to x-coordinate of player
+        set {hideout::spawn::y} to y-coordinate of player
+        set {hideout::spawn::z} to z-coordinate of player
+        send "{@p} 하이드아웃 스폰 설정 완료." to player
+
+command /하이드아웃정보:
+    permission: op
+    trigger:
+        send "{@p} spawn: %{hideout::spawn::world}% (%{hideout::spawn::x}%, %{hideout::spawn::y}%, %{hideout::spawn::z}%)" to player
+        send "{@p} pos1: %{hideout::pos1::world}% (%{hideout::pos1::x}%, %{hideout::pos1::y}%, %{hideout::pos1::z}%)" to player
+        send "{@p} pos2: %{hideout::pos2::world}% (%{hideout::pos2::x}%, %{hideout::pos2::y}%, %{hideout::pos2::z}%)" to player
+
+# ======================================================
+# [1] 구역 판정 유틸
+# ======================================================
+function hideout_is_ready() :: boolean:
+    if {hideout::pos1::world} is not set:
+        return false
+    if {hideout::pos2::world} is not set:
+        return false
+    if {hideout::pos1::world} is not {hideout::pos2::world}:
+        return false
+    return true
+
+function hideout_is_inside(p: player) :: boolean:
+    if hideout_is_ready() is false:
+        return false
+
+    if "%world of {_p}%" is not {hideout::pos1::world}:
+        return false
+
+    set {_x} to x-coordinate of {_p}
+    set {_y} to y-coordinate of {_p}
+    set {_z} to z-coordinate of {_p}
+
+    set {_minx} to {hideout::pos1::x}
+    set {_maxx} to {hideout::pos2::x}
+    if {_minx} > {_maxx}:
+        set {_t} to {_minx}
+        set {_minx} to {_maxx}
+        set {_maxx} to {_t}
+
+    set {_miny} to {hideout::pos1::y}
+    set {_maxy} to {hideout::pos2::y}
+    if {_miny} > {_maxy}:
+        set {_t2} to {_miny}
+        set {_miny} to {_maxy}
+        set {_maxy} to {_t2}
+
+    set {_minz} to {hideout::pos1::z}
+    set {_maxz} to {hideout::pos2::z}
+    if {_minz} > {_maxz}:
+        set {_t3} to {_minz}
+        set {_minz} to {_maxz}
+        set {_maxz} to {_t3}
+
+    if {_x} < {_minx}:
+        return false
+    if {_x} > {_maxx}:
+        return false
+    if {_y} < {_miny}:
+        return false
+    if {_y} > {_maxy}:
+        return false
+    if {_z} < {_minz}:
+        return false
+    if {_z} > {_maxz}:
+        return false
+
+    return true
+
+# ======================================================
+# [2] in_hideout 갱신 (가벼운 주기 체크)
+# ======================================================
+every 1 second:
+    loop all players:
+        if hideout_is_inside(loop-player) is true:
+            set {in_hideout::%loop-player%} to true
+        else:
+            delete {in_hideout::%loop-player%}
+
+# ======================================================
+# [3] 세이프존: 하이드아웃에서는 피해 무효
+# ======================================================
+on damage of player:
+    if {in_hideout::%victim%} is true:
+        cancel event

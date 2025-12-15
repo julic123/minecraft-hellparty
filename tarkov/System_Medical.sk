@@ -1,0 +1,179 @@
+# =========================================
+# System_Medical.sk
+# =========================================
+# 순정 Skript 문법 / 에러 0 목표
+# - 변수치환 뒤 %기호(%%) 사용 금지 -> "퍼센트" 텍스트로 표시
+# - lore 콤마 금지 -> and
+# - heal % of max health 미지원 -> 직접 체력 계산
+# =========================================
+
+options:
+    p: &c[의무실] &f
+
+# ======================================================
+# [0] 기본값 (1회)
+# ======================================================
+on load:
+    if {med::heal::rate::1} is not set:
+        set {med::heal::rate::1} to 30
+        set {med::heal::rate::2} to 60
+        set {med::heal::rate::3} to 100
+
+    if {med::cost::1} is not set:
+        set {med::cost::1} to 1
+        set {med::cost::2} to 2
+        set {med::cost::3} to 3
+
+on join:
+    set {_u} to uuid of player
+    if {med::level::%{_u}%} is not set:
+        set {med::level::%{_u}%} to 1
+
+# ======================================================
+# [1] 유틸: 이름 아이템 보유 체크 (순정)
+# ======================================================
+function med_has_named_item(p: player, itemName: text, need: number) :: boolean:
+    set {_cnt} to 0
+    loop integers from 0 to 35:
+        set {_it} to slot loop-value of {_p}'s inventory
+        if {_it} is not air:
+            if uncolored name of {_it} is uncolored {_itemName}:
+                add amount of {_it} to {_cnt}
+                if {_cnt} >= {_need}:
+                    return true
+    return false
+
+# ======================================================
+# [2] 유틸: 이름 아이템 제거 (순정)
+# ======================================================
+function med_remove_named_item(p: player, itemName: text, need: number):
+    set {_left} to {_need}
+
+    loop integers from 0 to 35:
+        if {_left} <= 0:
+            stop loop
+
+        set {_it} to slot loop-value of {_p}'s inventory
+        if {_it} is air:
+            continue loop
+
+        if uncolored name of {_it} is uncolored {_itemName}:
+            if amount of {_it} <= {_left}:
+                remove amount of {_it} from {_left}
+                set slot loop-value of {_p}'s inventory to air
+            else:
+                set amount of {_it} to amount of {_it} - {_left}
+                set {_left} to 0
+
+# ======================================================
+# [3] 의무실 GUI 열기
+# ======================================================
+command /의무실:
+    trigger:
+        if {in_hideout::%player%} is not true:
+            send "{@p} 의무실은 하이드아웃에서만 이용 가능합니다." to player
+            stop
+        open_med_gui(player)
+
+function open_med_gui(p: player):
+    set {_u} to uuid of {_p}
+    if {med::level::%{_u}%} is not set:
+        set {med::level::%{_u}%} to 1
+
+    set {_lv} to {med::level::%{_u}%}
+
+    set {_rate} to {med::heal::rate::%{_lv}%}
+    if {_rate} is not set:
+        set {_rate} to 30
+
+    set {_need} to {med::cost::%{_lv}%}
+    if {_need} is not set:
+        set {_need} to 1
+
+    set {_gui} to chest inventory with 3 rows named "&8[ 의무실 ]"
+
+    # ✅ 핵심: %{_rate}% 뒤에 %기호 붙이지 않음 (퍼센트 텍스트 사용)
+    set slot 11 of {_gui} to golden apple named "&a 치료 받기" with lore "&7회복률: %{_rate}% 퍼센트" and "&7필요 아이템: 의료 키트 x%{_need}%"
+    set slot 15 of {_gui} to anvil named "&e 의무실 업그레이드" with lore "&7현재 레벨: %{_lv}%"
+
+    set slot 26 of {_gui} to arrow named "&c 뒤로가기"
+    open {_gui} to {_p}
+
+# ======================================================
+# [4] 의무실 GUI 클릭
+# ======================================================
+on inventory click:
+    if name of event-inventory is "&8[ 의무실 ]":
+        cancel event
+
+        if clicked slot is 26:
+            execute player command "/하이드아웃"
+            stop
+
+        if clicked slot is 11:
+            heal_player(player)
+            stop
+
+        if clicked slot is 15:
+            upgrade_med(player)
+            stop
+
+# ======================================================
+# [5] 치료 처리
+# ======================================================
+function heal_player(p: player):
+    set {_u} to uuid of {_p}
+    set {_lv} to {med::level::%{_u}%}
+    if {_lv} is not set:
+        set {_lv} to 1
+
+    set {_need} to {med::cost::%{_lv}%}
+    if {_need} is not set:
+        set {_need} to 1
+
+    if med_has_named_item({_p}, "의료 키트", {_need}) is false:
+        send "{@p} 의료 키트가 부족합니다." to {_p}
+        stop
+
+    med_remove_named_item({_p}, "의료 키트", {_need})
+
+    set {_rate} to {med::heal::rate::%{_lv}%}
+    if {_rate} is not set:
+        set {_rate} to 30
+
+    set {_max} to max health of {_p}
+    set {_add} to {_max} * {_rate} / 100
+    set {_new} to health of {_p} + {_add}
+    if {_new} > {_max}:
+        set {_new} to {_max}
+    set health of {_p} to {_new}
+
+    send "{@p} 치료 완료! 체력이 회복되었습니다." to {_p}
+
+# ======================================================
+# [6] 의무실 업그레이드 (임시 비용)
+# ======================================================
+function upgrade_med(p: player):
+    set {_u} to uuid of {_p}
+    set {_lv} to {med::level::%{_u}%}
+    if {_lv} is not set:
+        set {_lv} to 1
+
+    if {_lv} >= 3:
+        send "{@p} 이미 최대 레벨입니다." to {_p}
+        stop
+
+    set {_price} to {_lv} * 10000
+
+    if {money::%{_u}%} is not set:
+        set {money::%{_u}%} to 0
+
+    if {money::%{_u}%} < {_price}:
+        send "{@p} 업그레이드 비용이 부족합니다." to {_p}
+        stop
+
+    remove {_price} from {money::%{_u}%}
+    add 1 to {med::level::%{_u}%}
+
+    send "{@p} 의무실 레벨이 %{med::level::%{_u}%}%로 상승했습니다!" to {_p}
+    open_med_gui({_p})

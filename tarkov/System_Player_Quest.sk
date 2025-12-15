@@ -1,0 +1,206 @@
+# =========================================
+# System_Player_Quest.sk
+# 순정 Skript 문법 / 에러 0 버전 (loop-value-1 명시)
+# =========================================
+
+options:
+    p: &b[퀘스트] &f
+
+# ======================================================
+# [0] 퀘스트 데이터 정의
+# ======================================================
+on load:
+    if {quest::init} is not set:
+        set {quest::init} to true
+
+        delete {quest::list::*}
+
+        add "Q1_KILL_SCAV" to {quest::list::*}
+        add "Q2_LOOT_MED" to {quest::list::*}
+        add "Q3_ESCAPE" to {quest::list::*}
+        add "Q4_KILL_BOSS" to {quest::list::*}
+
+        set {quest::type::Q1_KILL_SCAV} to "KILL"
+        set {quest::target::Q1_KILL_SCAV} to "SCAV"
+        set {quest::amount::Q1_KILL_SCAV} to 5
+        set {quest::reward::Q1_KILL_SCAV::money} to 20000
+
+        set {quest::type::Q2_LOOT_MED} to "LOOT"
+        set {quest::target::Q2_LOOT_MED} to "의료 키트"
+        set {quest::amount::Q2_LOOT_MED} to 2
+        set {quest::require::Q2_LOOT_MED::quest} to "Q1_KILL_SCAV"
+        set {quest::reward::Q2_LOOT_MED::money} to 30000
+
+        set {quest::type::Q3_ESCAPE} to "RAID"
+        set {quest::require::Q3_ESCAPE::quest} to "Q2_LOOT_MED"
+        set {quest::reward::Q3_ESCAPE::money} to 40000
+
+        set {quest::type::Q4_KILL_BOSS} to "KILL"
+        set {quest::target::Q4_KILL_BOSS} to "BOSS"
+        set {quest::amount::Q4_KILL_BOSS} to 1
+        set {quest::require::Q4_KILL_BOSS::quest} to "Q3_ESCAPE"
+        set {quest::require::Q4_KILL_BOSS::craft} to 2
+        set {quest::reward::Q4_KILL_BOSS::money} to 80000
+        set {quest::reward::Q4_KILL_BOSS::item} to "PMC_BACKPACK"
+        set {quest::reward::Q4_KILL_BOSS::armor} to "T5"
+
+# ======================================================
+# [1] 퀘스트 GUI
+# ======================================================
+command /퀘스트:
+    trigger:
+        open_quest_gui(player)
+
+function open_quest_gui(p: player):
+    set {_gui} to chest inventory with 5 rows named "&8[ 퀘스트 ]"
+    set {_slot} to 10
+
+    loop {quest::list::*}:
+        set {_q} to loop-value
+
+        set {_state} to {quest::state::%{_p}%::%{_q}%}
+        if {_state} is not set:
+            set {_state} to 0
+
+        if {quest::require::%{_q}%::quest} is set:
+            set {_req} to {quest::require::%{_q}%::quest}
+            if {quest::state::%{_p}%::%{_req}%} is not 2:
+                set slot {_slot} of {_gui} to barrier named "&c잠김" with lore "&7선행 퀘스트 필요: %{_req}%"
+                add 1 to {_slot}
+                continue loop
+
+        if {quest::require::%{_q}%::craft} is set:
+            set {_needLv} to {quest::require::%{_q}%::craft}
+            set {_lv} to {hideout::craft::level::%{_p}%}
+            if {_lv} is not set:
+                set {_lv} to 0
+            if {_lv} < {_needLv}:
+                set slot {_slot} of {_gui} to barrier named "&c잠김" with lore "&7제작실 Lv.%{_needLv}% 필요"
+                add 1 to {_slot}
+                continue loop
+
+        if {_state} = 0:
+            set {_item} to paper named "&f%{_q}% &7[미수락]"
+        else if {_state} = 1:
+            set {_cur} to {quest::progress::%{_p}%::%{_q}%}
+            if {_cur} is not set:
+                set {_cur} to 0
+            set {_need} to {quest::amount::%{_q}%}
+            if {_need} is not set:
+                set {_need} to 1
+            set {_item} to paper named "&e%{_q}% &7[진행중]" with lore "&7진행도: %{_cur}% / %{_need}%"
+        else:
+            set {_item} to lime dye named "&a%{_q}% &7[완료]"
+
+        set slot {_slot} of {_gui} to {_item}
+        add 1 to {_slot}
+
+    open {_gui} to {_p}
+
+# ======================================================
+# [2] 퀘스트 수락
+# ======================================================
+on inventory click:
+    if name of event-inventory is "&8[ 퀘스트 ]":
+        cancel event
+        if event-item is air:
+            stop
+        if type of event-item is barrier:
+            stop
+        if type of event-item is lime dye:
+            stop
+
+        set {_q} to uncolored name of event-item
+        replace " [미수락]" with "" in {_q}
+        replace " [진행중]" with "" in {_q}
+        replace " [완료]" with "" in {_q}
+
+        if {quest::state::%player%::%{_q}%} is set:
+            if {quest::state::%player%::%{_q}%} is 1:
+                stop
+            if {quest::state::%player%::%{_q}%} is 2:
+                stop
+
+        set {quest::state::%player%::%{_q}%} to 1
+        set {quest::progress::%player%::%{_q}%} to 0
+        send "{@p} 퀘스트 수락: %{_q}%" to player
+        open_quest_gui(player)
+
+# ======================================================
+# [3] 몹 처치 진행도
+# ======================================================
+on death:
+    if attacker is player:
+        if victim has scoreboard tag "tk_mob":
+
+            if victim has scoreboard tag "SCAV":
+                if {quest::state::%attacker%::Q1_KILL_SCAV} = 1:
+                    add 1 to {quest::progress::%attacker%::Q1_KILL_SCAV}
+                    check_quest(attacker, "Q1_KILL_SCAV")
+
+            if victim has scoreboard tag "BOSS":
+                if {quest::state::%attacker%::Q4_KILL_BOSS} = 1:
+                    add 1 to {quest::progress::%attacker%::Q4_KILL_BOSS}
+                    check_quest(attacker, "Q4_KILL_BOSS")
+
+# ======================================================
+# [4] 아이템 확보 진행도 (가방 기준)
+# - 핵심 수정: loop-value -> loop-value-1
+# ======================================================
+every 5 seconds:
+    loop all players:
+        set {_p} to loop-player
+
+        if {quest::state::%{_p}%::Q2_LOOT_MED} = 1:
+            set {_cnt} to 0
+
+            loop {bag::items::%{_p}%::*}:
+                set {_it} to loop-value-1
+                if {_it} is not air:
+                    if uncolored name of {_it} is "의료 키트":
+                        add 1 to {_cnt}
+
+            set {quest::progress::%{_p}%::Q2_LOOT_MED} to {_cnt}
+            check_quest({_p}, "Q2_LOOT_MED")
+
+# ======================================================
+# [5] 레이드 탈출 연동
+# ======================================================
+function quest_raid_escape(p: player):
+    if {quest::state::%{_p}%::Q3_ESCAPE} = 1:
+        set {quest::progress::%{_p}%::Q3_ESCAPE} to 1
+        check_quest({_p}, "Q3_ESCAPE")
+
+# ======================================================
+# [6] 완료 처리 + 보상
+# ======================================================
+function check_quest(p: player, q: text):
+    set {_need} to {quest::amount::%{_q}%}
+    if {_need} is not set:
+        set {_need} to 1
+
+    set {_cur} to {quest::progress::%{_p}%::%{_q}%}
+    if {_cur} is not set:
+        set {_cur} to 0
+
+    if {_cur} >= {_need}:
+        complete_quest({_p}, {_q})
+
+function complete_quest(p: player, q: text):
+    set {quest::state::%{_p}%::%{_q}%} to 2
+    delete {quest::progress::%{_p}%::%{_q}%}
+
+    send "{@p} 퀘스트 완료: %{_q}%" to {_p}
+
+    set {_u} to uuid of {_p}
+
+    if {quest::reward::%{_q}%::money} is set:
+        add {quest::reward::%{_q}%::money} to {money::%{_u}%}
+
+    if {quest::reward::%{_q}%::item} is set:
+        if {quest::reward::%{_q}%::item} is "PMC_BACKPACK":
+            give {_p} chest named "&6[PMC_BACKPACK]"
+
+    if {quest::reward::%{_q}%::armor} is set:
+        if {quest::reward::%{_q}%::armor} is "T5":
+            give {_p} iron chestplate named "&6[T5] 바디아머"
