@@ -486,6 +486,25 @@ function bag_can_withdraw_from_stash(p: player, it: item) :: boolean:
     return false
 
 function bag_get_script_stack_limit() :: number:
+    if {@STASH_SCRIPT_MAX_STACK} > 0:
+        return {@STASH_SCRIPT_MAX_STACK}
+    return 1
+
+function bag_can_store_in_stash(it: item) :: boolean:
+    if bag_is_script_item({_it}) is true:
+        return true
+    if bag_is_tacz_item({_it}) is true:
+        return true
+    return false
+
+function bag_can_withdraw_from_stash(p: player, it: item) :: boolean:
+    if bag_is_in_system({_p}) is true:
+        return true
+    if bag_is_tacz_item({_it}) is true:
+        return true
+    return false
+
+function bag_get_script_stack_limit() :: number:
     if {@STASH_SCRIPT_MAX_STACK} is set:
         if {@STASH_SCRIPT_MAX_STACK} > 0:
             return {@STASH_SCRIPT_MAX_STACK}
@@ -715,7 +734,7 @@ function bag_is_placeholder(it: item) :: boolean:
 function bag_update_placeholders(p: player):
     set {_u} to uuid of {_p}
 
-    if {@SIMPLE_ARMOR_LOCK} is true:
+    if "{@SIMPLE_ARMOR_LOCK}" is "true":
         set {_sec} to slot 8 of {_p}'s inventory
         if {_sec} is chest:
             if name of {_sec} contains "보안 컨테이너":
@@ -1167,21 +1186,6 @@ on inventory click:
             stop
 
     # ---------------- PLAYER INVENTORY (SYSTEM ONLY) ----------------
-        set {_it} to event-item
-        if {_it} is not set:
-            stop
-        if {_it} is air:
-            stop
-
-        set {_u} to uuid of player
-        set {_s} to index of event-slot
-
-        give {_it} to player
-        set slot {_s} of event-inventory to air
-        send "{@p} 아이템을 회수했습니다." to player
-        stop
-
-    # ---------------- PLAYER INVENTORY (SYSTEM ONLY) ----------------
     if clicked inventory is player's inventory:
         if bag_is_in_system(player) is false:
             stop
@@ -1205,7 +1209,7 @@ on inventory click:
                 stop
 
         # 2) 금지 슬롯
-        if {@SIMPLE_ARMOR_LOCK} is true:
+        if "{@SIMPLE_ARMOR_LOCK}" is "true":
             # 최소 모드: 갑옷/가방/보컨만 제한
             if {_s} is 9:
                 if {_cursor} is not air:
