@@ -39,6 +39,10 @@ on load:
         set {bag::expand::T3} to 9
         set {bag::expand::T4} to 12
 
+    # 옵션 캐시 (상수 경고 회피)
+    set {bag::opt_simple_armor_lock} to {@SIMPLE_ARMOR_LOCK}
+    set {bag::opt_script_max_stack} to {@STASH_SCRIPT_MAX_STACK}
+
     if {bag::secure::size::T1} is not set:
         set {bag::secure::size::T1} to 4
         set {bag::secure::size::T2} to 6
@@ -470,6 +474,31 @@ function bag_classify(it: item) :: text:
         return "TARKOV_ONLY"
 
     return "WILD_ONLY"
+
+function bag_stash_can_store(it: item) :: boolean:
+    if bag_is_script_item({_it}) is true:
+        return true
+    if bag_is_tacz_item({_it}) is true:
+        return true
+    return false
+
+function bag_stash_can_withdraw(p: player, it: item) :: boolean:
+    if bag_is_in_system({_p}) is true:
+        return true
+    if bag_is_tacz_item({_it}) is true:
+        return true
+    return false
+
+function bag_get_script_stack_limit() :: number:
+    if {bag::opt_script_max_stack} is set:
+        if {bag::opt_script_max_stack} > 0:
+            return {bag::opt_script_max_stack}
+    return 1
+
+function bag_simple_lock_enabled() :: boolean:
+    if {bag::opt_simple_armor_lock} is true:
+        return true
+    return false
 
 function bag_can_store_in_stash(it: item) :: boolean:
     if bag_is_script_item({_it}) is true:
