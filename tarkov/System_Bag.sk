@@ -667,6 +667,24 @@ function bag_is_placeholder(it: item) :: boolean:
 function bag_update_placeholders(p: player):
     set {_u} to uuid of {_p}
 
+    if {@SIMPLE_ARMOR_LOCK} is true:
+        set {_sec} to slot 8 of {_p}'s inventory
+        if {_sec} is chest:
+            if name of {_sec} contains "보안 컨테이너":
+                stop
+        if {_sec} is air:
+            set slot 8 of {_p}'s inventory to chest named "&6보안 컨테이너" with lore "&7클릭하여 열기" and "&8SECURE_CONTAINER"
+            stop
+        if bag_is_placeholder({_sec}) is true:
+            set slot 8 of {_p}'s inventory to chest named "&6보안 컨테이너" with lore "&7클릭하여 열기" and "&8SECURE_CONTAINER"
+            stop
+
+        set {_empty} to bag_find_empty_base_slot({_p})
+        if {_empty} >= 0:
+            set slot {_empty} of {_p}'s inventory to {_sec}
+            set slot 8 of {_p}'s inventory to chest named "&6보안 컨테이너" with lore "&7클릭하여 열기" and "&8SECURE_CONTAINER"
+        stop
+
     set {_banned::1} to 5
     set {_banned::2} to 6
     set {_banned::3} to 7
