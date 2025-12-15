@@ -500,6 +500,31 @@ function bag_simple_lock_enabled() :: boolean:
         return true
     return false
 
+function bag_stash_can_store(it: item) :: boolean:
+    if bag_is_script_item({_it}) is true:
+        return true
+    if bag_is_tacz_item({_it}) is true:
+        return true
+    return false
+
+function bag_stash_can_withdraw(p: player, it: item) :: boolean:
+    if bag_is_in_system({_p}) is true:
+        return true
+    if bag_is_tacz_item({_it}) is true:
+        return true
+    return false
+
+function bag_get_script_stack_limit() :: number:
+    if {bag::opt_script_max_stack} is set:
+        if {bag::opt_script_max_stack} > 0:
+            return {bag::opt_script_max_stack}
+    return 1
+
+function bag_simple_lock_enabled() :: boolean:
+    if {bag::opt_simple_armor_lock} is true:
+        return true
+    return false
+
 function bag_can_store_in_stash(it: item) :: boolean:
     if bag_is_script_item({_it}) is true:
         return true
