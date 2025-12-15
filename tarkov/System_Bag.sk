@@ -500,6 +500,70 @@ function bag_simple_lock_enabled() :: boolean:
         return true
     return false
 
+function bag_stash_can_store(it: item) :: boolean:
+    if bag_is_script_item({_it}) is true:
+        return true
+    if bag_is_tacz_item({_it}) is true:
+        return true
+    return false
+
+function bag_stash_can_withdraw(p: player, it: item) :: boolean:
+    if bag_is_in_system({_p}) is true:
+        return true
+    if bag_is_tacz_item({_it}) is true:
+        return true
+    return false
+
+function bag_get_script_stack_limit() :: number:
+    if {bag::opt_script_max_stack} is set:
+        if {bag::opt_script_max_stack} > 0:
+            return {bag::opt_script_max_stack}
+    return 1
+
+function bag_simple_lock_enabled() :: boolean:
+    if {bag::opt_simple_armor_lock} is true:
+        return true
+    return false
+
+function bag_can_store_in_stash(it: item) :: boolean:
+    if bag_is_script_item({_it}) is true:
+        return true
+    if bag_is_tacz_item({_it}) is true:
+        return true
+    return false
+
+function bag_can_withdraw_from_stash(p: player, it: item) :: boolean:
+    if bag_is_in_system({_p}) is true:
+        return true
+    if bag_is_tacz_item({_it}) is true:
+        return true
+    return false
+
+function bag_get_script_stack_limit() :: number:
+    if {@STASH_SCRIPT_MAX_STACK} > 0:
+        return {@STASH_SCRIPT_MAX_STACK}
+    return 1
+
+function bag_can_store_in_stash(it: item) :: boolean:
+    if bag_is_script_item({_it}) is true:
+        return true
+    if bag_is_tacz_item({_it}) is true:
+        return true
+    return false
+
+function bag_can_withdraw_from_stash(p: player, it: item) :: boolean:
+    if bag_is_in_system({_p}) is true:
+        return true
+    if bag_is_tacz_item({_it}) is true:
+        return true
+    return false
+
+function bag_get_script_stack_limit() :: number:
+    if {@STASH_SCRIPT_MAX_STACK} is set:
+        if {@STASH_SCRIPT_MAX_STACK} > 0:
+            return {@STASH_SCRIPT_MAX_STACK}
+    return 1
+
 # 타르코프 진입 시: 야생 전용(WILD_ONLY)만 야생보관함으로 자동 보관
 function bag_should_store_in_wild(it: item) :: boolean:
     if {_it} is air:
@@ -528,7 +592,7 @@ function bag_stash_add_item(p: player, it: item) :: boolean:
     if {_size} is not set:
         set {_size} to 54
 
-    if bag_stash_can_store({_it}) is false:
+    if bag_can_store_in_stash({_it}) is false:
         return false
 
     set {_empty::*} to ""
@@ -724,7 +788,7 @@ function bag_is_placeholder(it: item) :: boolean:
 function bag_update_placeholders(p: player):
     set {_u} to uuid of {_p}
 
-    if bag_simple_lock_enabled() is true:
+    if "{@SIMPLE_ARMOR_LOCK}" is "true":
         set {_sec} to slot 8 of {_p}'s inventory
         if {_sec} is chest:
             if name of {_sec} contains "보안 컨테이너":
@@ -1152,7 +1216,7 @@ on inventory click:
         set {_u} to uuid of player
 
         if clicked inventory is player's inventory:
-            if bag_stash_can_store({_it}) is false:
+            if bag_can_store_in_stash({_it}) is false:
                 send "{@p} 스태쉬에는 타르코프 스크립트 아이템 또는 TACZ 아이템만 넣을 수 있습니다." to player
                 stop
             if bag_stash_add_item(player, {_it}) is true:
@@ -1163,7 +1227,7 @@ on inventory click:
             stop
 
         if clicked inventory is event-inventory:
-            if bag_stash_can_withdraw(player, {_it}) is false:
+            if bag_can_withdraw_from_stash(player, {_it}) is false:
                 send "{@p} 야생에서는 TACZ 아이템만 스태쉬에서 꺼낼 수 있습니다." to player
                 stop
             set {_empty} to bag_find_empty_any_slot(player)
@@ -1199,7 +1263,7 @@ on inventory click:
                 stop
 
         # 2) 금지 슬롯
-        if bag_simple_lock_enabled() is true:
+        if "{@SIMPLE_ARMOR_LOCK}" is "true":
             # 최소 모드: 갑옷/가방/보컨만 제한
             if {_s} is 9:
                 if {_cursor} is not air:
