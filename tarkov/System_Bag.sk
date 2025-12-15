@@ -1,0 +1,1342 @@
+# =========================================
+# System_Bag.sk
+# 순정 Skript 문법 / 에러 0 목표
+# =========================================
+# [통합 시스템]
+# - 인벤토리 슬롯 제한 (하이드아웃/레이드 전용)
+# - 가방 등급 (T1~T4)
+# - 보안 컨테이너 (감마)
+# - 야생 보관함 (야생에서만 회수)
+# - 스태쉬 (개인 창고)
+# - 야끼런 (사망 보호)
+# =========================================
+
+options:
+    p: &3[가방] &f
+    SECURE_GUI_TITLE: &8[ 보안 컨테이너 ]
+    STASH_GUI_TITLE: &8[ 스태쉬 ]
+    WILD_GUI_TITLE: &8[ 야생 보관함 ]
+
+# ======================================================
+# 슬롯 레이아웃 (플레이어 인벤토리) - 실제 마크 슬롯 번호
+# ======================================================
+# 핫바:     [사용0] [사용1] [사용2] [사용3] [사용4] [금지5] [금지6] [금지7] [보컨8]
+# 인벤 행1: [갑옷9] [금지10] [기본11] [기본12] [기본13] [확장14] [확장15] [확장16] [확장17]
+# 인벤 행2: [가방18] [금지19] [기본20] [기본21] [기본22] [확장23] [확장24] [확장25] [확장26]
+# 인벤 행3: [금지27] [금지28] [기본29] [기본30] [기본31] [확장32] [확장33] [확장34] [확장35]
+# ======================================================
+
+# ======================================================
+# [0] 기본값 초기화
+# ======================================================
+on load:
+    if {bag::expand::T1} is not set:
+        set {bag::expand::T1} to 3
+        set {bag::expand::T2} to 6
+        set {bag::expand::T3} to 9
+        set {bag::expand::T4} to 12
+
+    if {bag::secure::size::T1} is not set:
+        set {bag::secure::size::T1} to 4
+        set {bag::secure::size::T2} to 6
+        set {bag::secure::size::T3} to 8
+        set {bag::secure::size::T4} to 9
+
+    if {bag::stash::default_size} is not set:
+        set {bag::stash::default_size} to 54
+
+on join:
+    set {_u} to uuid of player
+    if {bag::tier::%{_u}%} is not set:
+        set {bag::tier::%{_u}%} to "NONE"
+    if {bag::secure::tier::%{_u}%} is not set:
+        set {bag::secure::tier::%{_u}%} to "T1"
+
+every 1 second:
+    loop all players:
+        set {_p} to loop-player
+        set {_u} to uuid of {_p}
+
+        if bag_is_in_system({_p}) is true:
+            if {bag::in_system::%{_u}%} is not true:
+                set {bag::in_system::%{_u}%} to true
+                bag_apply_enter_system({_p})
+            else:
+                # 시스템 안에서는 placeholder 유지
+                bag_update_placeholders({_p})
+        else:
+            if {bag::in_system::%{_u}%} is true:
+                set {bag::in_system::%{_u}%} to false
+                bag_apply_leave_system({_p})
+
+# ======================================================
+# [1] 유틸 함수
+# ======================================================
+
+function bag_is_in_system(p: player) :: boolean:
+    if {in_hideout::%{_p}%} is true:
+        return true
+    if {in_raid::%{_p}%} is true:
+        return true
+    return false
+
+function bag_is_banned_slot(slot: number) :: boolean:
+    if {_slot} is 5:
+        return true
+    if {_slot} is 6:
+        return true
+    if {_slot} is 7:
+        return true
+    if {_slot} is 10:
+        return true
+    if {_slot} is 19:
+        return true
+    if {_slot} is 27:
+        return true
+    if {_slot} is 28:
+        return true
+    return false
+
+function bag_is_expand_slot(slot: number) :: boolean:
+    if {_slot} >= 14:
+        if {_slot} <= 17:
+            return true
+    if {_slot} >= 23:
+        if {_slot} <= 26:
+            return true
+    if {_slot} >= 32:
+        if {_slot} <= 35:
+            return true
+    return false
+
+function bag_is_slot_unlocked(p: player, slot: number) :: boolean:
+    set {_u} to uuid of {_p}
+    set {_tier} to {bag::tier::%{_u}%}
+    if {_tier} is not set:
+        set {_tier} to "NONE"
+
+    if bag_is_expand_slot({_slot}) is false:
+        return true
+
+    set {_col} to 0
+    if {_slot} is 14:
+        set {_col} to 1
+    else if {_slot} is 15:
+        set {_col} to 2
+    else if {_slot} is 16:
+        set {_col} to 3
+    else if {_slot} is 17:
+        set {_col} to 4
+    else if {_slot} is 23:
+        set {_col} to 1
+    else if {_slot} is 24:
+        set {_col} to 2
+    else if {_slot} is 25:
+        set {_col} to 3
+    else if {_slot} is 26:
+        set {_col} to 4
+    else if {_slot} is 32:
+        set {_col} to 1
+    else if {_slot} is 33:
+        set {_col} to 2
+    else if {_slot} is 34:
+        set {_col} to 3
+    else if {_slot} is 35:
+        set {_col} to 4
+
+    set {_unlocked} to 0
+    if {_tier} is "T1":
+        set {_unlocked} to 1
+    else if {_tier} is "T2":
+        set {_unlocked} to 2
+    else if {_tier} is "T3":
+        set {_unlocked} to 3
+    else if {_tier} is "T4":
+        set {_unlocked} to 4
+
+    if {_col} <= {_unlocked}:
+        return true
+    return false
+
+function bag_is_script_armor(it: item) :: boolean:
+    if {_it} is air:
+        return false
+    set {_l::*} to lore of {_it}
+    if {_l::*} is not set:
+        return false
+    loop {_l::*}:
+        if loop-value contains "&8ARMOR:":
+            return true
+        if loop-value contains "ARMOR:":
+            return true
+    return false
+
+function bag_is_script_bag(it: item) :: boolean:
+    if {_it} is air:
+        return false
+    set {_l::*} to lore of {_it}
+    if {_l::*} is not set:
+        return false
+    loop {_l::*}:
+        if loop-value contains "&8BAG:":
+            return true
+        if loop-value contains "BAG:":
+            return true
+    return false
+
+function bag_is_secure_item(it: item) :: boolean:
+    if {_it} is air:
+        return false
+    set {_l::*} to lore of {_it}
+    if {_l::*} is not set:
+        return false
+    loop {_l::*}:
+        if loop-value contains "&8SECURE":
+            return true
+        if loop-value contains "SECURE":
+            return true
+    return false
+
+function bag_is_script_item(it: item) :: boolean:
+    if {_it} is air:
+        return false
+    set {_l::*} to lore of {_it}
+    if {_l::*} is not set:
+        return false
+    loop {_l::*}:
+        if loop-value contains "&8":
+            return true
+    return false
+
+# ------------------------------------------------------
+# ✅ 안전한 분류를 위한 "타르코프 전용(등록)" 레지스트리
+# - 스크립트 아이템에 &8 마커가 없거나(실수)
+# - 특정 바닐라/커스텀 아이템을 "타르코프 전용"으로 강제하고 싶을 때 사용
+# 저장:
+#   {bag::tarkovreg::fp::%fingerprint%} = true
+# ------------------------------------------------------
+function bag_fingerprint(it: item) :: text:
+    if {_it} is air:
+        return ""
+    set {_fp} to ""
+    set {_n} to name of {_it}
+    if {_n} is set:
+        set {_fp} to "%{_n}%"
+    set {_l::*} to lore of {_it}
+    if {_l::*} is set:
+        loop {_l::*}:
+            set {_fp} to "%{_fp}%||%loop-value%"
+    return {_fp}
+
+function bag_is_registered_tarkov_item(it: item) :: boolean:
+    if {_it} is air:
+        return false
+    set {_fp} to bag_fingerprint({_it})
+    if {_fp} is "":
+        return false
+    if {bag::tarkovreg::fp::%{_fp}%} is true:
+        return true
+    return false
+
+# ------------------------------------------------------
+# TACZ 아이템 체크 (총/탄약/칼 등)
+# - ⚠️ 타입/아이템 문자열 변환("%type of {_it}%" / "%{_it}%") 금지
+# - 이름/로어 기반으로만 탐지 (NBT 커스텀 아이템 런타임 에러 방지)
+# ------------------------------------------------------
+function bag_is_tacz_item(it: item) :: boolean:
+    if {_it} is air:
+        return false
+
+    set {_name} to name of {_it}
+    if {_name} is set:
+        if {_name} contains "tacz":
+            return true
+        if {_name} contains "TAC:":
+            return true
+        if {_name} contains "TACZ":
+            return true
+
+    set {_l::*} to lore of {_it}
+    if {_l::*} is set:
+        loop {_l::*}:
+            if loop-value contains "tacz":
+                return true
+            if loop-value contains "TAC:":
+                return true
+            if loop-value contains "AmmoId":
+                return true
+            if loop-value contains "AmmoID":
+                return true
+    return false
+
+# ------------------------------------------------------
+# SHARED(야생/타르코프 공용) 판정: 절대 야생보관함으로 보내면 안 되는 것들
+# - 무기/도구(검/곡괭이/도끼/삽/괭이, 활/석궁/삼지창 등)
+# - 화살류
+# - 음식(최소 목록)
+# ------------------------------------------------------
+function bag_is_shared_item(it: item) :: boolean:
+    # SHARED(야생/타르코프 공용) 판정: 절대 야생보관함으로 보내면 안 되는 것들
+    # - TACZ 총/탄/칼 등 (이름/로어 기반)
+    # - 바닐라 무기/도구(검/곡괭이/도끼/삽/괭이/활/석궁/삼지창/방패 등)
+    # - 화살류/로켓
+    # - 음식(최소 필수 목록)
+    if {_it} is not set:
+        return false
+    if {_it} is air:
+        return false
+
+    # 스크립트 아이템은 공용이 아니라 TARKOV_ONLY로 취급
+    if bag_is_script_item({_it}) is true:
+        return false
+
+    # TACZ는 무조건 공용
+    if bag_is_tacz_item({_it}) is true:
+        return true
+
+    # --- 무기/도구(바닐라) ---
+    # swords
+    if type of {_it} is wooden sword:
+        return true
+    if type of {_it} is stone sword:
+        return true
+    if type of {_it} is iron sword:
+        return true
+    if type of {_it} is golden sword:
+        return true
+    if type of {_it} is diamond sword:
+        return true
+    if type of {_it} is netherite sword:
+        return true
+    # pickaxes
+    if type of {_it} is wooden pickaxe:
+        return true
+    if type of {_it} is stone pickaxe:
+        return true
+    if type of {_it} is iron pickaxe:
+        return true
+    if type of {_it} is golden pickaxe:
+        return true
+    if type of {_it} is diamond pickaxe:
+        return true
+    if type of {_it} is netherite pickaxe:
+        return true
+    # axes
+    if type of {_it} is wooden axe:
+        return true
+    if type of {_it} is stone axe:
+        return true
+    if type of {_it} is iron axe:
+        return true
+    if type of {_it} is golden axe:
+        return true
+    if type of {_it} is diamond axe:
+        return true
+    if type of {_it} is netherite axe:
+        return true
+    # shovels
+    if type of {_it} is wooden shovel:
+        return true
+    if type of {_it} is stone shovel:
+        return true
+    if type of {_it} is iron shovel:
+        return true
+    if type of {_it} is golden shovel:
+        return true
+    if type of {_it} is diamond shovel:
+        return true
+    if type of {_it} is netherite shovel:
+        return true
+    # hoes
+    if type of {_it} is wooden hoe:
+        return true
+    if type of {_it} is stone hoe:
+        return true
+    if type of {_it} is iron hoe:
+        return true
+    if type of {_it} is golden hoe:
+        return true
+    if type of {_it} is diamond hoe:
+        return true
+    if type of {_it} is netherite hoe:
+        return true
+    # ranged/tools
+    if type of {_it} is bow:
+        return true
+    if type of {_it} is crossbow:
+        return true
+    if type of {_it} is trident:
+        return true
+    if type of {_it} is shield:
+        return true
+    if type of {_it} is fishing rod:
+        return true
+    if type of {_it} is shears:
+        return true
+    if type of {_it} is flint and steel:
+        return true
+    # --- 탄약/투사체 ---
+    if type of {_it} is arrow:
+        return true
+    if type of {_it} is spectral arrow:
+        return true
+    if type of {_it} is tipped arrow:
+        return true
+    if type of {_it} is firework rocket:
+        return true
+    # --- 음식/생존(필수 목록) ---
+    # 기본
+    if type of {_it} is apple:
+        return true
+    if type of {_it} is golden apple:
+        return true
+    if type of {_it} is enchanted golden apple:
+        return true
+    if type of {_it} is bread:
+        return true
+    if type of {_it} is baked potato:
+        return true
+    if type of {_it} is potato:
+        return true
+    if type of {_it} is carrot:
+        return true
+    if type of {_it} is beetroot:
+        return true
+    # 고기류
+    if type of {_it} is cooked beef:
+        return true
+    if type of {_it} is cooked porkchop:
+        return true
+    if type of {_it} is cooked chicken:
+        return true
+    if type of {_it} is cooked mutton:
+        return true
+    if type of {_it} is cooked rabbit:
+        return true
+    # 생선류
+    if type of {_it} is cooked cod:
+        return true
+    if type of {_it} is cod:
+        return true
+    if type of {_it} is cooked salmon:
+        return true
+    if type of {_it} is salmon:
+        return true
+    if type of {_it} is tropical fish:
+        return true
+    if type of {_it} is pufferfish:
+        return true
+    # 기타
+    if type of {_it} is pumpkin pie:
+        return true
+    if type of {_it} is melon slice:
+        return true
+    if type of {_it} is sweet berries:
+        return true
+    if type of {_it} is glow berries:
+        return true
+    if type of {_it} is chorus fruit:
+        return true
+    if type of {_it} is dried kelp:
+        return true
+    if type of {_it} is honey bottle:
+        return true
+    if type of {_it} is mushroom stew:
+        return true
+    if type of {_it} is rabbit stew:
+        return true
+    if type of {_it} is beetroot soup:
+        return true
+    if type of {_it} is suspicious stew:
+        return true
+    return false
+
+function bag_classify(it: item) :: text:
+    if {_it} is air:
+        return "NONE"
+
+    if bag_is_shared_item({_it}) is true:
+        return "SHARED"
+
+    # 스크립트 아이템은 타르코프 전용
+    if bag_is_script_item({_it}) is true:
+        return "TARKOV_ONLY"
+
+    # 수동 등록된 타르코프 전용 아이템
+    if bag_is_registered_tarkov_item({_it}) is true:
+        return "TARKOV_ONLY"
+
+    return "WILD_ONLY"
+
+# 타르코프 진입 시: 야생 전용(WILD_ONLY)만 야생보관함으로 자동 보관
+function bag_should_store_in_wild(it: item) :: boolean:
+    if {_it} is air:
+        return false
+    if bag_is_placeholder({_it}) is true:
+        return false
+    set {_c} to bag_classify({_it})
+    if {_c} is "WILD_ONLY":
+        return true
+    return false
+
+# ------------------------------------------------------
+# 시스템 전환 처리 (야생 ↔ 타르코프)
+# - 매 틱이 아니라 "전환 시점 1회" + 1초 주기 placeholder 유지로 안정화
+# ------------------------------------------------------
+function bag_find_empty_any_slot(p: player) :: number:
+    loop integers from 0 to 35:
+        set {_s} to loop-value
+        if slot {_s} of {_p}'s inventory is air:
+            return {_s}
+    return -1
+
+function bag_stash_add_item(p: player, it: item) :: boolean:
+    set {_u} to uuid of {_p}
+    set {_size} to {bag::stash::default_size}
+    if {_size} is not set:
+        set {_size} to 54
+
+    loop integers from 0 to ({_size} - 1):
+        set {_idx} to loop-value
+        if {bag::stash::%{_u}%::%{_idx}%} is not set:
+            set {bag::stash::%{_u}%::%{_idx}%} to {_it}
+            return true
+        if {bag::stash::%{_u}%::%{_idx}%} is air:
+            set {bag::stash::%{_u}%::%{_idx}%} to {_it}
+            return true
+    return false
+
+function bag_apply_enter_system(p: player):
+    # 야생 → (하이드아웃/레이드) 진입 시
+    set {_u} to uuid of {_p}
+    set {_moved} to 0
+
+    # WILD_ONLY(순수 바닐라 잡템)만 야생 보관함으로 이동
+    loop integers from 0 to 35:
+        set {_s} to loop-value
+        set {_it} to slot {_s} of {_p}'s inventory
+        if {_it} is not set:
+            continue loop
+        if {_it} is air:
+            continue loop
+        if bag_is_placeholder({_it}) is true:
+            continue loop
+
+        set {_cls} to bag_classify({_it})
+        if {_cls} is "WILD_ONLY":
+            add {_it} to {bag::wild::%{_u}%::*}
+            set slot {_s} of {_p}'s inventory to air
+            add 1 to {_moved}
+
+    bag_update_placeholders({_p})
+    if {_moved} > 0:
+        send "{@p} &7순수 바닐라 아이템 %{_moved}%개를 야생 보관함으로 보관했습니다." to {_p}
+
+function bag_apply_leave_system(p: player):
+    # (하이드아웃/레이드) → 야생 이탈 시
+    set {_u} to uuid of {_p}
+
+    # 1) placeholder 제거
+    bag_clear_placeholders({_p})
+
+    # 2) 타르코프 전용 아이템은 야생 노출 방지: 스태쉬로 이동
+    set {_moved_tk} to 0
+    loop integers from 0 to 35:
+        set {_s} to loop-value
+        set {_it} to slot {_s} of {_p}'s inventory
+        if {_it} is not set:
+            continue loop
+        if {_it} is air:
+            continue loop
+        if bag_is_placeholder({_it}) is true:
+            continue loop
+
+        set {_cls} to bag_classify({_it})
+        if {_cls} is "TARKOV_ONLY":
+            if bag_stash_add_item({_p}, {_it}) is true:
+                set slot {_s} of {_p}'s inventory to air
+                add 1 to {_moved_tk}
+
+    # 3) 야생 보관함 아이템 복귀(공간 있는 만큼)
+    delete {_keep::*}
+    set {_restored} to 0
+    loop {bag::wild::%{_u}%::*}:
+        set {_it2} to loop-value
+        set {_empty} to bag_find_empty_any_slot({_p})
+        if {_empty} >= 0:
+            set slot {_empty} of {_p}'s inventory to {_it2}
+            add 1 to {_restored}
+        else:
+            add {_it2} to {_keep::*}
+
+    delete {bag::wild::%{_u}%::*}
+    loop {_keep::*}:
+        add loop-value to {bag::wild::%{_u}%::*}
+
+    if {_moved_tk} > 0:
+        send "{@p} &7타르코프 전용 아이템 %{_moved_tk}%개를 스태쉬로 이동했습니다." to {_p}
+    if {_restored} > 0:
+        send "{@p} &7야생 보관함 아이템 %{_restored}%개를 인벤으로 되돌렸습니다." to {_p}
+
+function bag_get_tier_from_item(it: item) :: text:
+    if {_it} is air:
+        return "NONE"
+    set {_l::*} to lore of {_it}
+    if {_l::*} is not set:
+        return "NONE"
+    loop {_l::*}:
+        if loop-value contains "BAG:":
+            set {_line} to loop-value
+            if {_line} contains "T4":
+                return "T4"
+            if {_line} contains "T3":
+                return "T3"
+            if {_line} contains "T2":
+                return "T2"
+            if {_line} contains "T1":
+                return "T1"
+    return "NONE"
+
+function bag_find_empty_base_slot(p: player) :: number:
+    set {_slots::1} to 11
+    set {_slots::2} to 12
+    set {_slots::3} to 13
+    set {_slots::4} to 20
+    set {_slots::5} to 21
+    set {_slots::6} to 22
+    set {_slots::7} to 29
+    set {_slots::8} to 30
+    set {_slots::9} to 31
+
+    loop 9 times:
+        set {_s} to {_slots::%loop-number%}
+        set {_it} to slot {_s} of {_p}'s inventory
+        if {_it} is air:
+            return {_s}
+
+    set {_exp::1} to 14
+    set {_exp::2} to 15
+    set {_exp::3} to 16
+    set {_exp::4} to 17
+    set {_exp::5} to 23
+    set {_exp::6} to 24
+    set {_exp::7} to 25
+    set {_exp::8} to 26
+    set {_exp::9} to 32
+    set {_exp::10} to 33
+    set {_exp::11} to 34
+    set {_exp::12} to 35
+
+    loop 12 times:
+        set {_s} to {_exp::%loop-number%}
+        if bag_is_slot_unlocked({_p}, {_s}) is true:
+            set {_it} to slot {_s} of {_p}'s inventory
+            if {_it} is air:
+                return {_s}
+
+    loop integers from 0 to 4:
+        set {_it} to slot loop-value of {_p}'s inventory
+        if {_it} is air:
+            return loop-value
+
+    return -1
+
+function bag_is_placeholder(it: item) :: boolean:
+    if {_it} is air:
+        return false
+    if {_it} is red stained glass pane:
+        return true
+    if {_it} is purple stained glass pane:
+        return true
+    if {_it} is gray stained glass pane:
+        return true
+    if {_it} is chest:
+        if name of {_it} contains "보안 컨테이너":
+            return true
+    if {_it} is barrier:
+        if name of {_it} contains "금지":
+            return true
+    return false
+
+# ======================================================
+# [2] 인벤토리 슬롯 제한 시스템
+# ======================================================
+
+function bag_update_placeholders(p: player):
+    set {_u} to uuid of {_p}
+
+    set {_banned::1} to 5
+    set {_banned::2} to 6
+    set {_banned::3} to 7
+    set {_banned::4} to 10
+    set {_banned::5} to 19
+    set {_banned::6} to 27
+    set {_banned::7} to 28
+
+    loop 7 times:
+        set {_s} to {_banned::%loop-number%}
+        set {_it} to slot {_s} of {_p}'s inventory
+        if {_it} is not air:
+            if bag_is_placeholder({_it}) is false:
+                set {_empty} to bag_find_empty_base_slot({_p})
+                if {_empty} >= 0:
+                    set slot {_empty} of {_p}'s inventory to {_it}
+                else:
+                    drop {_it} at {_p}
+        set slot {_s} of {_p}'s inventory to red stained glass pane named "&c금지 구역"
+
+    set {_exp::1} to 14
+    set {_exp::2} to 15
+    set {_exp::3} to 16
+    set {_exp::4} to 17
+    set {_exp::5} to 23
+    set {_exp::6} to 24
+    set {_exp::7} to 25
+    set {_exp::8} to 26
+    set {_exp::9} to 32
+    set {_exp::10} to 33
+    set {_exp::11} to 34
+    set {_exp::12} to 35
+
+    loop 12 times:
+        set {_s} to {_exp::%loop-number%}
+        set {_it} to slot {_s} of {_p}'s inventory
+        if bag_is_slot_unlocked({_p}, {_s}) is false:
+            if {_it} is not air:
+                if bag_is_placeholder({_it}) is false:
+                    set {_empty} to bag_find_empty_base_slot({_p})
+                    if {_empty} >= 0:
+                        set slot {_empty} of {_p}'s inventory to {_it}
+                    else:
+                        drop {_it} at {_p}
+            set slot {_s} of {_p}'s inventory to purple stained glass pane named "&d가방 필요"
+        else:
+            if {_it} is purple stained glass pane:
+                set slot {_s} of {_p}'s inventory to air
+
+    set {_armor} to slot 9 of {_p}'s inventory
+    if {_armor} is not air:
+        if bag_is_script_armor({_armor}) is false:
+            if bag_is_placeholder({_armor}) is false:
+                set {_empty} to bag_find_empty_base_slot({_p})
+                if {_empty} >= 0:
+                    set slot {_empty} of {_p}'s inventory to {_armor}
+                else:
+                    drop {_armor} at {_p}
+                set slot 9 of {_p}'s inventory to gray stained glass pane named "&7갑옷 전용"
+
+    set {_bag} to slot 18 of {_p}'s inventory
+    if {_bag} is not air:
+        if bag_is_script_bag({_bag}) is false:
+            if bag_is_placeholder({_bag}) is false:
+                set {_empty} to bag_find_empty_base_slot({_p})
+                if {_empty} >= 0:
+                    set slot {_empty} of {_p}'s inventory to {_bag}
+                else:
+                    drop {_bag} at {_p}
+                set slot 18 of {_p}'s inventory to gray stained glass pane named "&7가방 전용"
+
+    set {_sec} to slot 8 of {_p}'s inventory
+    # 보안컨테이너 슬롯: 이미 보컨 아이콘이면 스킵
+    if {_sec} is chest:
+        if name of {_sec} contains "보안 컨테이너":
+            stop
+    # 다른 아이템이 있으면 이동
+    if {_sec} is not air:
+        if bag_is_placeholder({_sec}) is false:
+            set {_empty} to bag_find_empty_base_slot({_p})
+            if {_empty} >= 0:
+                set slot {_empty} of {_p}'s inventory to {_sec}
+            else:
+                drop {_sec} at {_p}
+    set slot 8 of {_p}'s inventory to chest named "&6보안 컨테이너" with lore "&7클릭하여 열기" and "&8SECURE_CONTAINER"
+
+# placeholder 전부 제거 (야생으로 나갈 때)
+function bag_clear_placeholders(p: player):
+    loop integers from 0 to 35:
+        set {_it} to slot loop-value of {_p}'s inventory
+        if bag_is_placeholder({_it}) is true:
+            set slot loop-value of {_p}'s inventory to air
+
+# ======================================================
+# [3] 전환 트리거 + 야생보관함 자동 분류
+# ======================================================
+
+# 하이드아웃/레이드 진입 시 야생 전용(WILD_ONLY) 아이템만 자동 보관
+function bag_store_wild_only_items(p: player):
+    set {_u} to uuid of {_p}
+    set {_stored} to 0
+
+    loop integers from 0 to 35:
+        set {_it} to slot loop-value of {_p}'s inventory
+        if {_it} is air:
+            continue loop
+        if bag_is_placeholder({_it}) is true:
+            continue loop
+
+        if bag_should_store_in_wild({_it}) is true:
+            add {_it} to {bag::wild::%{_u}%::*}
+            set slot loop-value of {_p}'s inventory to air
+            add 1 to {_stored}
+
+    if {_stored} > 0:
+        send "{@p} 야생 전용 아이템 %{_stored}%개가 야생 보관함에 보관되었습니다." to {_p}
+
+# 타르코프 → 야생 이탈 시: 타르코프 전용(TARKOV_ONLY) 아이템을 스태쉬로 자동 보관
+function bag_store_tarkov_only_to_stash(p: player):
+    set {_u} to uuid of {_p}
+    set {_moved} to 0
+
+    loop integers from 0 to 35:
+        set {_slot} to loop-value
+        set {_it} to slot {_slot} of {_p}'s inventory
+        if {_it} is air:
+            continue loop
+        if bag_is_placeholder({_it}) is true:
+            continue loop
+
+        set {_c} to bag_classify({_it})
+        if {_c} is "TARKOV_ONLY":
+            # 스태쉬 첫 빈칸 찾기
+            set {_size} to {bag::stash::default_size}
+            if {_size} is not set:
+                set {_size} to 54
+
+            set {_done} to false
+            loop integers from 0 to ({_size} - 1):
+                set {_i} to loop-value-1
+                if {bag::stash::%{_u}%::%{_i}%} is not set:
+                    set {bag::stash::%{_u}%::%{_i}%} to {_it}
+                    set {_done} to true
+                    stop loop
+                if {bag::stash::%{_u}%::%{_i}%} is air:
+                    set {bag::stash::%{_u}%::%{_i}%} to {_it}
+                    set {_done} to true
+                    stop loop
+
+            if {_done} is true:
+                set slot {_slot} of {_p}'s inventory to air
+                add 1 to {_moved}
+            else:
+                # 스태쉬가 가득 찼으면 드랍(최후 수단)
+                drop {_it} at {_p}
+                set slot {_slot} of {_p}'s inventory to air
+                add 1 to {_moved}
+
+    if {_moved} > 0:
+        send "{@p} 타르코프 전용 아이템 %{_moved}%개를 스태쉬로 보관했습니다." to {_p}
+
+function bag_update_tier(p: player):
+    set {_u} to uuid of {_p}
+    set {_bag} to slot 18 of {_p}'s inventory
+    set {_tier} to bag_get_tier_from_item({_bag})
+    set {bag::tier::%{_u}%} to {_tier}
+    if bag_is_in_system({_p}) is true:
+        bag_update_placeholders({_p})
+
+# 전환 감지 + 플레이스홀더 갱신(단일 루프)
+every 10 ticks:
+    loop all players:
+        set {_u} to uuid of loop-player
+        set {_inNow} to bag_is_in_system(loop-player)
+
+        if {_inNow} is true:
+            if {bag::in_system::%{_u}%} is not true:
+                set {bag::in_system::%{_u}%} to true
+                bag_update_tier(loop-player)
+                bag_store_wild_only_items(loop-player)
+                bag_update_placeholders(loop-player)
+            else:
+                bag_update_placeholders(loop-player)
+        else:
+            if {bag::in_system::%{_u}%} is true:
+                delete {bag::in_system::%{_u}%}
+                bag_clear_placeholders(loop-player)
+                # 타르코프 전용 아이템은 야생에 들고 나가지 않도록 스태쉬로 자동 보관
+                bag_store_tarkov_only_to_stash(loop-player)
+
+# ======================================================
+# [4] 보안 컨테이너 시스템
+# ======================================================
+function bag_open_secure_gui(p: player):
+    set {_u} to uuid of {_p}
+    set {_tier} to {bag::secure::tier::%{_u}%}
+    if {_tier} is not set:
+        set {_tier} to "T1"
+
+    set {_size} to {bag::secure::size::%{_tier}%}
+    if {_size} is not set:
+        set {_size} to 4
+
+    set {_gui} to chest inventory with 1 row named "{@SECURE_GUI_TITLE}"
+
+    loop integers from 1 to {_size}:
+        set {_idx} to loop-value
+        if {bag::secure::%{_u}%::%{_idx}%} is set:
+            set slot ({_idx} - 1) of {_gui} to {bag::secure::%{_u}%::%{_idx}%}
+
+    loop integers from ({_size} + 1) to 9:
+        set slot (loop-value - 1) of {_gui} to barrier named "&c잠김"
+
+    open {_gui} to {_p}
+
+function bag_add_to_secure(p: player, it: item):
+    if {_it} is air:
+        stop
+    # placeholder는 보컨에 넣지 않음
+    if bag_is_placeholder({_it}) is true:
+        stop
+
+    set {_u} to uuid of {_p}
+    set {_tier} to {bag::secure::tier::%{_u}%}
+    if {_tier} is not set:
+        set {_tier} to "T1"
+
+    set {_size} to {bag::secure::size::%{_tier}%}
+    if {_size} is not set:
+        set {_size} to 4
+
+    loop integers from 1 to {_size}:
+        set {_idx} to loop-value
+        if {bag::secure::%{_u}%::%{_idx}%} is not set:
+            set {bag::secure::%{_u}%::%{_idx}%} to {_it}
+            send "{@p} 보안 컨테이너에 아이템을 넣었습니다." to {_p}
+            stop
+        if {bag::secure::%{_u}%::%{_idx}%} is air:
+            set {bag::secure::%{_u}%::%{_idx}%} to {_it}
+            send "{@p} 보안 컨테이너에 아이템을 넣었습니다." to {_p}
+            stop
+
+    send "{@p} 보안 컨테이너가 가득 찼습니다." to {_p}
+    set {_empty} to bag_find_empty_base_slot({_p})
+    if {_empty} >= 0:
+        set slot {_empty} of {_p}'s inventory to {_it}
+    else:
+        drop {_it} at {_p}
+
+# ======================================================
+# [5] 스태쉬 시스템 (개인 창고)
+# ======================================================
+command /스태쉬:
+    trigger:
+        if {in_hideout::%player%} is not true:
+            send "{@p} 스태쉬는 하이드아웃에서만 사용 가능합니다." to player
+            stop
+        bag_open_stash(player)
+
+function bag_open_stash(p: player):
+    set {_u} to uuid of {_p}
+    set {_size} to {bag::stash::default_size}
+    if {_size} is not set:
+        set {_size} to 54
+
+    set {_rows} to {_size} / 9
+    set {_gui} to chest inventory with {_rows} rows named "{@STASH_GUI_TITLE}"
+
+    loop integers from 0 to ({_size} - 1):
+        set {_idx} to loop-value
+        if {bag::stash::%{_u}%::%{_idx}%} is set:
+            set slot {_idx} of {_gui} to {bag::stash::%{_u}%::%{_idx}%}
+
+    open {_gui} to {_p}
+
+# ======================================================
+# [6] 야생 보관함 시스템
+# ======================================================
+command /야생보관함:
+    trigger:
+        # 야생에서만 열 수 있음
+        if {in_hideout::%player%} is true:
+            send "{@p} 야생 보관함은 야생에서만 회수할 수 있습니다." to player
+            stop
+        if {in_raid::%player%} is true:
+            send "{@p} 야생 보관함은 야생에서만 회수할 수 있습니다." to player
+            stop
+        bag_open_wild_storage(player)
+
+function bag_open_wild_storage(p: player):
+    set {_u} to uuid of {_p}
+    set {_gui} to chest inventory with 6 rows named "{@WILD_GUI_TITLE}"
+
+    # 변수 리스트를 슬롯에 배치
+    set {_slot} to 0
+    loop {bag::wild::%{_u}%::*}:
+        if {_slot} >= 54:
+            stop
+        if loop-value is set:
+            set slot {_slot} of {_gui} to loop-value
+            add 1 to {_slot}
+
+    open {_gui} to {_p}
+
+# ======================================================
+# [7] 야끼런 시스템 (사망 보호)
+# ======================================================
+on death:
+    if victim is player:
+        if {in_raid::%victim%} is true:
+            set {_u} to uuid of victim
+
+            delete {bag::yakkirun::%{_u}%::*}
+            set {_idx} to 0
+
+            loop integers from 0 to 35:
+                set {_it} to slot loop-value of victim's inventory
+                if {_it} is not air:
+                    if bag_is_secure_item({_it}) is true:
+                        add 1 to {_idx}
+                        set {bag::yakkirun::%{_u}%::%{_idx}%} to {_it}
+
+on respawn:
+    set {_u} to uuid of player
+    wait 1 tick
+
+    loop {bag::yakkirun::%{_u}%::*}:
+        give loop-value to player
+
+    delete {bag::yakkirun::%{_u}%::*}
+
+    # 하이드아웃/레이드면 보컨 아이콘 재설정
+    wait 2 ticks
+    if {in_hideout::%player%} is true:
+        set slot 8 of player's inventory to chest named "&6보안 컨테이너" with lore "&7클릭하여 열기" and "&8SECURE_CONTAINER"
+    if {in_raid::%player%} is true:
+        set slot 8 of player's inventory to chest named "&6보안 컨테이너" with lore "&7클릭하여 열기" and "&8SECURE_CONTAINER"
+
+# ======================================================
+# [8] 단일 인벤 이벤트 핸들러
+# - on inventory click / on inventory close는 파일 내 1개만 유지
+# ======================================================
+
+on inventory click:
+    # ---------------- SECURE GUI ----------------
+    if name of event-inventory is "{@SECURE_GUI_TITLE}":
+        cancel event
+
+        set {_s} to index of event-slot
+        set {_it} to event-item
+        set {_u} to uuid of player
+
+        if {_it} is not set:
+            stop
+        if {_it} is air:
+            stop
+        if {_it} is barrier:
+            stop
+
+        set {_empty} to bag_find_empty_base_slot(player)
+        if {_empty} >= 0:
+            set slot {_empty} of player's inventory to {_it}
+            set {_idx} to {_s} + 1
+            delete {bag::secure::%{_u}%::%{_idx}%}
+            set slot {_s} of event-inventory to air
+            send "{@p} 보안 컨테이너에서 아이템을 꺼냈습니다." to player
+        else:
+            send "{@p} 인벤토리가 가득 찼습니다." to player
+        stop
+
+    # ---------------- WILD GUI ----------------
+    if name of event-inventory is "{@WILD_GUI_TITLE}":
+        cancel event
+
+        set {_it} to event-item
+        if {_it} is not set:
+            stop
+        if {_it} is air:
+            stop
+
+        set {_u} to uuid of player
+        set {_s} to index of event-slot
+
+        give {_it} to player
+        set slot {_s} of event-inventory to air
+        send "{@p} 아이템을 회수했습니다." to player
+        stop
+
+    # ---------------- PLAYER INVENTORY (SYSTEM ONLY) ----------------
+    if clicked inventory is player's inventory:
+        if bag_is_in_system(player) is false:
+            stop
+
+        set {_s} to index of event-slot
+        set {_it} to event-item
+        set {_cursor} to cursor slot of player
+
+        # 1) placeholder 이동 방지 + 보컨 클릭
+        if {_it} is set:
+            if bag_is_placeholder({_it}) is true:
+                cancel event
+
+                if {_s} is 8:
+                    if {_it} is chest:
+                        if name of {_it} contains "보안 컨테이너":
+                            if {_cursor} is not air:
+                                if bag_is_placeholder({_cursor}) is false:
+                                    bag_add_to_secure(player, {_cursor})
+                                    set cursor slot of player to air
+                            else:
+                                bag_open_secure_gui(player)
+                stop
+
+        # 2) 금지 슬롯
+        if bag_is_banned_slot({_s}) is true:
+            cancel event
+            if {_cursor} is not air:
+                if bag_is_placeholder({_cursor}) is false:
+                    set {_empty} to bag_find_empty_base_slot(player)
+                    if {_empty} >= 0:
+                        set slot {_empty} of player's inventory to {_cursor}
+                        set cursor slot of player to air
+                    else:
+                        send "{@p} 인벤토리가 가득 찼습니다." to player
+            stop
+
+        # 3) 확장 슬롯 잠금
+        if bag_is_expand_slot({_s}) is true:
+            if bag_is_slot_unlocked(player, {_s}) is false:
+                cancel event
+                if {_cursor} is not air:
+                    if bag_is_placeholder({_cursor}) is false:
+                        set {_empty} to bag_find_empty_base_slot(player)
+                        if {_empty} >= 0:
+                            set slot {_empty} of player's inventory to {_cursor}
+                            set cursor slot of player to air
+                        else:
+                            send "{@p} 인벤토리가 가득 찼습니다." to player
+                stop
+
+        # 4) 갑옷 슬롯
+        if {_s} is 9:
+            if {_cursor} is not air:
+                if bag_is_script_armor({_cursor}) is false:
+                    cancel event
+                    if bag_is_placeholder({_cursor}) is false:
+                        set {_empty} to bag_find_empty_base_slot(player)
+                        if {_empty} >= 0:
+                            set slot {_empty} of player's inventory to {_cursor}
+                            set cursor slot of player to air
+                        else:
+                            send "{@p} 스크립트 갑옷만 장착할 수 있습니다." to player
+                    stop
+
+        # 5) 가방 슬롯 (등급 갱신)
+        if {_s} is 18:
+            # 커서로 넣는 경우 검증
+            if {_cursor} is not air:
+                if bag_is_script_bag({_cursor}) is false:
+                    cancel event
+                    if bag_is_placeholder({_cursor}) is false:
+                        set {_empty} to bag_find_empty_base_slot(player)
+                        if {_empty} >= 0:
+                            set slot {_empty} of player's inventory to {_cursor}
+                            set cursor slot of player to air
+                        else:
+                            send "{@p} 스크립트 가방만 장착할 수 있습니다." to player
+                    stop
+            # 어떤 방식이든(넣기/빼기/쉬프트) 1틱 뒤 등급 갱신
+            wait 1 tick
+            bag_update_tier(player)
+            stop
+
+        # 6) 보컨 슬롯(아이콘)
+        if {_s} is 8:
+            cancel event
+            if {_cursor} is not air:
+                if bag_is_placeholder({_cursor}) is false:
+                    bag_add_to_secure(player, {_cursor})
+                    set cursor slot of player to air
+            else:
+                bag_open_secure_gui(player)
+            stop
+
+# 단일 close 핸들러
+on inventory close:
+    # ---------------- SECURE GUI SAVE ----------------
+    if name of event-inventory is "{@SECURE_GUI_TITLE}":
+        set {_u} to uuid of player
+        set {_tier} to {bag::secure::tier::%{_u}%}
+        if {_tier} is not set:
+            set {_tier} to "T1"
+
+        set {_size} to {bag::secure::size::%{_tier}%}
+        if {_size} is not set:
+            set {_size} to 4
+
+        loop integers from 1 to {_size}:
+            set {_idx} to loop-value
+            set {_it} to slot ({_idx} - 1) of event-inventory
+            if {_it} is air:
+                delete {bag::secure::%{_u}%::%{_idx}%}
+            else if {_it} is barrier:
+                delete {bag::secure::%{_u}%::%{_idx}%}
+            else:
+                set {bag::secure::%{_u}%::%{_idx}%} to {_it}
+        stop
+
+    # ---------------- STASH GUI SAVE ----------------
+    if name of event-inventory is "{@STASH_GUI_TITLE}":
+        set {_u} to uuid of player
+        set {_size} to {bag::stash::default_size}
+        if {_size} is not set:
+            set {_size} to 54
+
+        loop integers from 0 to ({_size} - 1):
+            set {_idx} to loop-value
+            set {_it} to slot {_idx} of event-inventory
+            if {_it} is air:
+                delete {bag::stash::%{_u}%::%{_idx}%}
+            else:
+                set {bag::stash::%{_u}%::%{_idx}%} to {_it}
+
+        send "{@p} 스태쉬가 저장되었습니다." to player
+        stop
+
+    # ---------------- WILD GUI SAVE ----------------
+    if name of event-inventory is "{@WILD_GUI_TITLE}":
+        set {_u} to uuid of player
+        delete {bag::wild::%{_u}%::*}
+        loop integers from 0 to 53:
+            set {_it} to slot loop-value of event-inventory
+            if {_it} is not air:
+                add {_it} to {bag::wild::%{_u}%::*}
+        stop
+
+# ======================================================
+# [9] 관리자 명령어
+# ======================================================
+command /가방디버그:
+    permission: op
+    trigger:
+        set {_u} to uuid of player
+        send "{@p} in_hideout={in_hideout::%player%}  in_raid={in_raid::%player%}  bag_in_system={bag::in_system::%{_u}%}" to player
+        send "{@p} tier={bag::tier::%{_u}%}  secure_tier={bag::secure::tier::%{_u}%}" to player
+        set {_wc} to size of {bag::wild::%{_u}%::*}
+        send "{@p} wild_count=%{_wc}%  stash_default={bag::stash::default_size}" to player
+
+command /가방설정 <text> <text>:
+    permission: op
+    trigger:
+        set {_u} to uuid of player
+
+        if arg-1 is "가방":
+            if arg-2 is "T1":
+                set {bag::tier::%{_u}%} to "T1"
+            else if arg-2 is "T2":
+                set {bag::tier::%{_u}%} to "T2"
+            else if arg-2 is "T3":
+                set {bag::tier::%{_u}%} to "T3"
+            else if arg-2 is "T4":
+                set {bag::tier::%{_u}%} to "T4"
+            else:
+                set {bag::tier::%{_u}%} to "NONE"
+            if bag_is_in_system(player) is true:
+                bag_update_placeholders(player)
+            send "{@p} 가방 등급: %arg-2%" to player
+            stop
+
+        if arg-1 is "보컨":
+            if arg-2 is "T1":
+                set {bag::secure::tier::%{_u}%} to "T1"
+            else if arg-2 is "T2":
+                set {bag::secure::tier::%{_u}%} to "T2"
+            else if arg-2 is "T3":
+                set {bag::secure::tier::%{_u}%} to "T3"
+            else if arg-2 is "T4":
+                set {bag::secure::tier::%{_u}%} to "T4"
+            send "{@p} 보안 컨테이너 등급: %arg-2%" to player
+            stop
+
+        send "{@p} 사용법: /가방설정 <가방|보컨> <T1~T4|NONE>" to player
+
+command /가방지급 <text> <text>:
+    permission: op
+    trigger:
+        if arg-1 is "갑옷":
+            give player iron chestplate named "&b스크립트 갑옷 [%arg-2%]" with lore "&7방어력 보너스" and "&8ARMOR: %arg-2%"
+            send "{@p} 스크립트 갑옷 [%arg-2%] 지급" to player
+            stop
+
+        if arg-1 is "가방":
+            give player chest named "&e스크립트 가방 [%arg-2%]" with lore "&7확장 슬롯 해금" and "&8BAG: %arg-2%"
+            send "{@p} 스크립트 가방 [%arg-2%] 지급" to player
+            stop
+
+        send "{@p} 사용법: /가방지급 <갑옷|가방> <T1~T4>" to player
+
+command /야끼런테스트:
+    permission: op
+    trigger:
+        give player diamond sword named "&c야끼런 칼" with lore "&7사망해도 유지" and "&8SECURE"
+        send "{@p} 야끼런 테스트 아이템 지급" to player
+
+command /가방정보:
+    trigger:
+        set {_u} to uuid of player
+        set {_tier} to {bag::tier::%{_u}%}
+        set {_stier} to {bag::secure::tier::%{_u}%}
+        if {_tier} is not set:
+            set {_tier} to "NONE"
+        if {_stier} is not set:
+            set {_stier} to "T1"
+
+        send "{@p} 가방 등급: &e%{_tier}%" to player
+        send "{@p} 보안 컨테이너 등급: &e%{_stier}%" to player
+
+        set {_wild} to size of {bag::wild::%{_u}%::*}
+        if {_wild} is not set:
+            set {_wild} to 0
+        send "{@p} 야생 보관함: &e%{_wild}%개" to player
+
+        set {_inSys} to {bag::in_system::%{_u}%}
+        if {_inSys} is not set:
+            set {_inSys} to false
+        send "{@p} 시스템 내부: &e%{_inSys}%" to player
+
+command /야생보관함초기화:
+    permission: op
+    trigger:
+        set {_u} to uuid of player
+        delete {bag::wild::%{_u}%::*}
+        send "{@p} 야생 보관함 초기화 완료." to player
+
+# 타르코프 전용(등록) 관리
+command /타르코프아이템등록:
+    permission: op
+    trigger:
+        set {_it} to player's tool
+        if {_it} is air:
+            send "{@p} 손에 든 아이템이 없습니다." to player
+            stop
+        set {_fp} to bag_fingerprint({_it})
+        if {_fp} is "":
+            send "{@p} 등록 실패(이름/로어가 없는 아이템은 식별이 어려움)." to player
+            stop
+        set {bag::tarkovreg::fp::%{_fp}%} to true
+        send "{@p} 타르코프 전용 아이템으로 등록했습니다." to player
+
+command /타르코프아이템해제:
+    permission: op
+    trigger:
+        set {_it} to player's tool
+        if {_it} is air:
+            send "{@p} 손에 든 아이템이 없습니다." to player
+            stop
+        set {_fp} to bag_fingerprint({_it})
+        if {_fp} is "":
+            send "{@p} 해제 실패(이름/로어가 없는 아이템은 식별이 어려움)." to player
+            stop
+        delete {bag::tarkovreg::fp::%{_fp}%}
+        send "{@p} 타르코프 전용 아이템 등록을 해제했습니다." to player
+
+command /타르코프아이템확인:
+    permission: op
+    trigger:
+        set {_it} to player's tool
+        if {_it} is air:
+            send "{@p} 손에 든 아이템이 없습니다." to player
+            stop
+        if bag_is_registered_tarkov_item({_it}) is true:
+            send "{@p} 현재 아이템: &a등록됨(TARKOV_ONLY)" to player
+        else:
+            send "{@p} 현재 아이템: &c등록되지 않음" to player
+

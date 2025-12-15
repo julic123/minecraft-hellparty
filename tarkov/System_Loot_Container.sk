@@ -1,0 +1,925 @@
+options:
+    p: &6[루팅] &f
+    LOOT_GUI_TITLE: &8[ &6컨테이너 루팅 &8]
+    LOOT_CFG_TITLE: &8[ &e루팅 설정 &8]
+    LOCK_GUI_TITLE: &8[ &c잠금 관리 &8]
+
+# ======================================================
+# 컨테이너 타입: SAFE / DUFFLE / TOOLBOX / CRATE
+# 카테고리: VALUE / HIDEOUT / JUNK / AMMO
+#
+# 키(열쇠)
+#  {key::name::KEY_ID} = 표시명
+#  지급 키 item lore 1줄: "&8KEY: KEY_ID" (모루 위조 불가)
+#  잠금(좌표키):
+#    {lock::container::%locKey%} = KEY_ID
+#    {lock::door::%locKey%} = KEY_ID
+#
+# 아이템 레지스트리
+#  {item::stack::ID} = itemstack (ID/CAT 숨김 마커 포함)
+#  {item::cat::ID}   = category
+#  {loot::cat::CAT::*} = ID 목록
+#
+# 가중치
+#  {loot::base::CAT::ID} = number
+#  {loot::custom::TYPE::CAT::ID} = number
+#
+# 등록 컨테이너(월드 블록)
+#  {container::reg::%locKey%::type} = TYPE
+#  {container::reg::%locKey%::loc}  = location
+# ======================================================
+
+# ======================================================
+# [A] 유틸
+# ======================================================
+function tk_loc_key(l: location) :: text:
+    set {_w} to "%world of {_l}%"
+    set {_x} to floor(x-coordinate of {_l})
+    set {_y} to floor(y-coordinate of {_l})
+    set {_z} to floor(z-coordinate of {_l})
+    return "%{_w}%:%{_x}%:%{_y}%:%{_z}%"
+
+function tk_is_container_type(t: text) :: boolean:
+    if {_t} is "SAFE":
+        return true
+    if {_t} is "DUFFLE":
+        return true
+    if {_t} is "TOOLBOX":
+        return true
+    if {_t} is "CRATE":
+        return true
+    return false
+
+function tk_is_cat(c: text) :: boolean:
+    if {_c} is "VALUE":
+        return true
+    if {_c} is "HIDEOUT":
+        return true
+    if {_c} is "JUNK":
+        return true
+    if {_c} is "AMMO":
+        return true
+    return false
+
+function tk_list_has(list: objects, v: text) :: boolean:
+    loop {_list::*}:
+        if "%loop-value%" is "%{_v}%":
+            return true
+    return false
+
+# ======================================================
+# [B] 아이템 마커(ID/CAT) + 레지스트리
+# ======================================================
+function tk_mark_item(it: itemstack, id: text, cat: text) :: itemstack:
+    set {_l::*} to lore of {_it}
+    if {_l::*} is not set:
+        delete {_l::*}
+
+    set {_hasId} to false
+    set {_hasCat} to false
+    loop {_l::*}:
+        if loop-value contains "ID:":
+            set {_hasId} to true
+        if loop-value contains "CAT:":
+            set {_hasCat} to true
+
+    if {_hasId} is false:
+        add "&8ID: %{_id}%" to {_l::*}
+    if {_hasCat} is false:
+        add "&8CAT: %{_cat}%" to {_l::*}
+
+    set lore of {_it} to {_l::*}
+    return {_it}
+
+function tk_get_id_from_item(it: itemstack) :: text:
+    if {_it} is air:
+        return ""
+    set {_l::*} to lore of {_it}
+    if {_l::*} is not set:
+        return ""
+    loop {_l::*}:
+        if loop-value contains "ID:":
+            set {_t} to loop-value
+            replace all "&8" with "" in {_t}
+            replace all "ID: " with "" in {_t}
+            replace all "ID:" with "" in {_t}
+            replace all " " with "" in {_t}
+            return {_t}
+    return ""
+
+function tk_register_item(id: text, it: itemstack, cat: text):
+    if tk_is_cat({_cat}) is false:
+        stop
+
+    set {_marked} to tk_mark_item({_it}, {_id}, {_cat})
+    set {item::stack::%{_id}%} to {_marked}
+    set {item::cat::%{_id}%} to {_cat}
+
+    if tk_list_has({loot::cat::%{_cat}%::*}, {_id}) is false:
+        add {_id} to {loot::cat::%{_cat}%::*}
+
+# ======================================================
+# [C] 열쇠 검사 (lore 1줄: "&8KEY: KEY_ID")
+# ======================================================
+function tk_has_key(p: player, keyid: text) :: boolean:
+    loop all items in {_p}'s inventory:
+        if loop-item is air:
+            continue
+
+        set {_l::*} to lore of loop-item
+        if {_l::*} is not set:
+            continue
+
+        set {_line1} to {_l::1}
+        if {_line1} is not set:
+            continue
+
+        if {_line1} contains "KEY:":
+            set {_k} to {_line1}
+            replace all "&8" with "" in {_k}
+            replace all "KEY: " with "" in {_k}
+            replace all "KEY:" with "" in {_k}
+            replace all " " with "" in {_k}
+            if {_k} is {_keyid}:
+                return true
+    return false
+
+# ======================================================
+# [D] 카테고리 롤 + 아이템 선택(가중치)
+# ======================================================
+function tk_roll_category(type: text) :: text:
+    if tk_is_container_type({_type}) is false:
+        return ""
+
+    delete {_pool::*}
+    add "VALUE" to {_pool::*}
+    add "HIDEOUT" to {_pool::*}
+    add "JUNK" to {_pool::*}
+    add "AMMO" to {_pool::*}
+
+    set {_total} to 0
+    loop {_pool::*}:
+        add {container::rate::%{_type}%::%loop-value%} to {_total}
+
+    if {_total} <= 0:
+        return ""
+
+    set {_r} to random number between 0 and {_total}
+    set {_cur} to 0
+    loop {_pool::*}:
+        add {container::rate::%{_type}%::%loop-value%} to {_cur}
+        if {_r} <= {_cur}:
+            return loop-value
+
+    return ""
+
+function tk_get_weight(type: text, cat: text, id: text) :: number:
+    set {_b} to {loot::base::%{_cat}%::%{_id}%}
+    if {_b} is not set:
+        set {_b} to 0
+    set {_c} to {loot::custom::%{_type}%::%{_cat}%::%{_id}%}
+    if {_c} is not set:
+        set {_c} to 0
+    return {_b} + {_c}
+
+function tk_pick_loot_id(type: text, cat: text) :: text:
+    if tk_is_container_type({_type}) is false:
+        return ""
+    if tk_is_cat({_cat}) is false:
+        return ""
+
+    delete {_cand::*}
+    delete {_w::*}
+    set {_n} to 0
+
+    loop {loot::cat::%{_cat}%::*}:
+        set {_id} to loop-value
+        set {_tw} to tk_get_weight({_type}, {_cat}, {_id})
+        if {_tw} <= 0:
+            continue
+        add 1 to {_n}
+        set {_cand::%{_n}%} to {_id}
+        set {_w::%{_n}%} to {_tw}
+
+    if {_n} <= 0:
+        return ""
+
+    set {_total} to 0
+    loop integers from 1 to {_n}:
+        add {_w::%loop-value%} to {_total}
+    if {_total} <= 0:
+        return ""
+
+    set {_r} to random number between 0 and {_total}
+    set {_cur} to 0
+    loop integers from 1 to {_n}:
+        add {_w::%loop-value%} to {_cur}
+        if {_r} <= {_cur}:
+            return {_cand::%loop-value%}
+
+    return {_cand::1}
+
+function tk_pick_loot_item(type: text, cat: text) :: itemstack:
+    set {_id} to tk_pick_loot_id({_type}, {_cat})
+    if {_id} is "":
+        return air
+    if {item::stack::%{_id}%} is set:
+        return {item::stack::%{_id}%}
+    return paper named "&f%{_id}%"
+
+function tk_fill_container(inv: inventory, type: text, count: number):
+    loop {_count} times:
+        set {_cat} to tk_roll_category({_type})
+        if {_cat} is "":
+            stop
+        set {_it} to tk_pick_loot_item({_type}, {_cat})
+        if {_it} is air:
+            stop
+        add {_it} to {_inv}
+
+
+# ======================================================
+# [E] 컨테이너 루팅 저장(한 컨테이너는 한 번만 생성)
+#  {container::loot::%locKey%::slot::N} = itemstack
+#  {container::loot::%locKey%::gen} = true
+#  {container::loot::%locKey%::type} = TYPE
+# ======================================================
+function tk_generate_container_loot(k: text, type: text):
+    if tk_is_container_type({_type}) is false:
+        stop
+
+    delete {container::loot::%{_k}%::slot::*}
+
+    set {_max} to {container::max::%{_type}%}
+    if {_max} is not set:
+        set {_max} to 3
+
+    set {_count} to random integer between 1 and {_max}
+
+    set {_s} to 0
+    loop {_count} times:
+        set {_cat} to tk_roll_category({_type})
+        if {_cat} is "":
+            stop
+        set {_it} to tk_pick_loot_item({_type}, {_cat})
+        if {_it} is air:
+            stop
+
+        if {_s} > 26:
+            stop
+        set {container::loot::%{_k}%::slot::%{_s}%} to {_it}
+        add 1 to {_s}
+
+    set {container::loot::%{_k}%::gen} to true
+    set {container::loot::%{_k}%::type} to {_type}
+
+
+function tk_open_container(p: player, type: text, loc: location):
+    if tk_is_container_type({_type}) is false:
+        stop
+
+    set {_k} to tk_loc_key({_loc})
+
+    # --- 컨테이너 잠금(열쇠) ---
+    if {lock::container::%{_k}%} is set:
+        set {_keyid} to {lock::container::%{_k}%}
+        if tk_has_key({_p}, {_keyid}) is false:
+            send "{@p} 열쇠가 필요합니다: &e%{_keyid}%" to {_p}
+            stop
+
+    # --- 루팅 생성(1회) ---
+    if {container::loot::%{_k}%::gen} is not set:
+        tk_generate_container_loot({_k}, {_type})
+    else:
+        # 관리자가 컨테이너 타입을 바꾼 경우 재생성
+        if {container::loot::%{_k}%::type} is set:
+            if {container::loot::%{_k}%::type} is not {_type}:
+                tk_generate_container_loot({_k}, {_type})
+
+    set {_gui} to chest inventory with 3 rows named "{@LOOT_GUI_TITLE} &7(%{_type}%)"
+
+    loop integers from 0 to 26:
+        if {container::loot::%{_k}%::slot::%loop-value%} is set:
+            set slot loop-value of {_gui} to {container::loot::%{_k}%::slot::%loop-value%}
+
+    set {temp::lootgui::%{_p}%} to {_k}
+    open {_gui} to {_p}
+
+
+
+# ======================================================
+# [0] 기본값 세팅 (최초 1회)
+# ======================================================
+on load:
+    if {container::max::SAFE} is not set:
+        set {container::max::SAFE} to 3
+        set {container::max::DUFFLE} to 6
+        set {container::max::TOOLBOX} to 4
+        set {container::max::CRATE} to 5
+
+    if {container::rate::SAFE::VALUE} is not set:
+        set {container::rate::SAFE::VALUE} to 3.0
+        set {container::rate::SAFE::HIDEOUT} to 0.3
+        set {container::rate::SAFE::JUNK} to 0.1
+        set {container::rate::SAFE::AMMO} to 0.0
+
+        set {container::rate::DUFFLE::VALUE} to 0.3
+        set {container::rate::DUFFLE::HIDEOUT} to 0.5
+        set {container::rate::DUFFLE::JUNK} to 2.0
+        set {container::rate::DUFFLE::AMMO} to 0.5
+
+        set {container::rate::TOOLBOX::VALUE} to 0.0
+        set {container::rate::TOOLBOX::HIDEOUT} to 3.0
+        set {container::rate::TOOLBOX::JUNK} to 0.3
+        set {container::rate::TOOLBOX::AMMO} to 0.0
+
+        set {container::rate::CRATE::VALUE} to 1.0
+        set {container::rate::CRATE::HIDEOUT} to 1.0
+        set {container::rate::CRATE::JUNK} to 1.0
+        set {container::rate::CRATE::AMMO} to 1.0
+
+    if {key::name::KEY_SAFE_001} is not set:
+        set {key::name::KEY_SAFE_001} to "&e금고 열쇠 #1"
+        set {key::name::KEY_DORM_114} to "&e기숙사 114호 열쇠"
+
+    if {item::stack::LEDX} is not set:
+        tk_register_item("LEDX", paper named "&6LEDX", "VALUE")
+        set {loot::base::VALUE::LEDX} to 2
+        tk_register_item("GPU", paper named "&6GPU", "VALUE")
+        set {loot::base::VALUE::GPU} to 4
+        tk_register_item("BTC", paper named "&6비트코인", "VALUE")
+        set {loot::base::VALUE::BTC} to 6
+        tk_register_item("GOLD_BAR", paper named "&e금괴", "VALUE")
+        set {loot::base::VALUE::GOLD_BAR} to 8
+
+        tk_register_item("BOLT", paper named "&f볼트", "HIDEOUT")
+        set {loot::base::HIDEOUT::BOLT} to 10
+        tk_register_item("WIRE", paper named "&f전선", "HIDEOUT")
+        set {loot::base::HIDEOUT::WIRE} to 8
+        tk_register_item("DUCT_TAPE", paper named "&f덕테이프", "HIDEOUT")
+        set {loot::base::HIDEOUT::DUCT_TAPE} to 9
+        tk_register_item("GUN_PARTS", paper named "&f총기 부품", "HIDEOUT")
+        set {loot::base::HIDEOUT::GUN_PARTS} to 10
+
+        tk_register_item("CIG", paper named "&7담배", "JUNK")
+        set {loot::base::JUNK::CIG} to 10
+        tk_register_item("LIGHTER", paper named "&7라이터", "JUNK")
+        set {loot::base::JUNK::LIGHTER} to 9
+        tk_register_item("DIARY", paper named "&7일지", "JUNK")
+        set {loot::base::JUNK::DIARY} to 12
+
+        tk_register_item("BROKEN_SCAV_GUN", blaze rod named "&c고장난 스캐브 총기" with lore "&8BROKEN: SCAV", "JUNK")
+        set {loot::base::JUNK::BROKEN_SCAV_GUN} to 20
+        tk_register_item("BROKEN_BOSS_GUN", blaze rod named "&4고장난 보스 총기" with lore "&8BROKEN: BOSS", "JUNK")
+        set {loot::base::JUNK::BROKEN_BOSS_GUN} to 40
+
+        tk_register_item("AMMO_FMJ", paper named "&cFMJ 탄약 토큰", "AMMO")
+        set {loot::base::AMMO::AMMO_FMJ} to 12
+        tk_register_item("AMMO_HP", paper named "&cHP 탄약 토큰", "AMMO")
+        set {loot::base::AMMO::AMMO_HP} to 12
+
+# ======================================================
+# [1] 우클릭: 문 잠금 + 컨테이너 루팅
+# ======================================================
+on right click:
+    if clicked block is not set:
+        stop
+
+    set {_b} to clicked block
+    set {_loc} to location of {_b}
+    set {_k} to tk_loc_key({_loc})
+
+    # ✅ 네 Skript 호환: 블록타입 문자열 기반 판별
+    set {_bt} to "%type of {_b}%"
+    # (호환성) lowercase 표현식 미지원 환경: 대소문자 변환 없이 contains 다중 체크로 처리
+    replace all " " with "_" in {_bt}
+
+    # --- 문/트랩도어/펜스게이트 잠금 ---
+    # ✅ 1.21 호환: type 문자열에 공백이 있을 수 있어 "_"로 정규화해서 검사한다.
+    # ✅ 도어는 위/아래 반쪽을 클릭할 수 있으니, 현재 블록/위/아래 위치 모두 잠금키를 확인한다.
+
+    set {_isDoorLike} to false
+    set {_isDoorBlock} to false
+    # trapdoor
+    if {_bt} contains "trapdoor":
+        set {_isDoorLike} to true
+    else if {_bt} contains "Trapdoor":
+        set {_isDoorLike} to true
+    else if {_bt} contains "TRAPDOOR":
+        set {_isDoorLike} to true
+    # fence gate
+    else if {_bt} contains "fence_gate":
+        set {_isDoorLike} to true
+    else if {_bt} contains "Fence_Gate":
+        set {_isDoorLike} to true
+    else if {_bt} contains "FENCE_GATE":
+        set {_isDoorLike} to true
+    # door (2-block)
+    else if {_bt} contains "_door":
+        set {_isDoorLike} to true
+        set {_isDoorBlock} to true
+    else if {_bt} contains "_Door":
+        set {_isDoorLike} to true
+        set {_isDoorBlock} to true
+    else if {_bt} contains "_DOOR":
+        set {_isDoorLike} to true
+        set {_isDoorBlock} to true
+
+    if {_isDoorLike} is true:
+        # 잠금 키 탐색 (기본 = 클릭한 블록)
+        set {_lockK} to {_k}
+
+        # 도어는 2블록 구조라 위/아래도 같이 확인
+        if {_isDoorBlock} is true:
+            if {lock::door::%{_lockK}%} is not set:
+                set {_bDown} to block below {_b}
+                if {_bDown} is set:
+                    set {_kDown} to tk_loc_key(location of {_bDown})
+                    if {lock::door::%{_kDown}%} is set:
+                        set {_lockK} to {_kDown}
+
+            if {lock::door::%{_lockK}%} is not set:
+                set {_bUp} to block above {_b}
+                if {_bUp} is set:
+                    set {_kUp} to tk_loc_key(location of {_bUp})
+                    if {lock::door::%{_kUp}%} is set:
+                        set {_lockK} to {_kUp}
+
+        # 잠금이 실제로 설정된 경우에만 차단
+        if {lock::door::%{_lockK}%} is set:
+            set {_keyid} to {lock::door::%{_lockK}%}
+            if {_keyid} is not set:
+                stop
+            if tk_has_key(player, {_keyid}) is false:
+                cancel event
+                send "{@p} 열쇠가 필요합니다: &e%{_keyid}%" to player
+                stop
+
+    # --- 컨테이너 루팅(상자/배럴) ---
+
+    if {_b} is chest:
+        if {in_raid::%player%} is not true:
+            stop
+        if {container::reg::%{_k}%::type} is set:
+            cancel event
+            tk_open_container(player, {container::reg::%{_k}%::type}, {_loc})
+            stop
+
+    if {_b} is barrel:
+        if {in_raid::%player%} is not true:
+            stop
+        if {container::reg::%{_k}%::type} is set:
+            cancel event
+            tk_open_container(player, {container::reg::%{_k}%::type}, {_loc})
+            stop
+
+# 루팅 GUI 클릭 -> (단순화) 인벤으로 직접 이동
+# - 가방 아이템(슬롯 18, &8BAG: 마커)이 있어야 루팅 가능
+# - 가방/확장 용량 대신, 인벤 빈 슬롯이 있으면 수령 가능 (9=갑옷칸, 18=가방칸은 비움 유지)
+function tk_find_empty_loot_slot(p: player) :: number:
+    loop integers from 0 to 35:
+        if loop-value is 9:
+            continue loop
+        if loop-value is 18:
+            continue loop
+        set {_it} to slot loop-value of {_p}'s inventory
+        if {_it} is air:
+            return loop-value
+    return -1
+
+function tk_has_bag_equipped(p: player) :: boolean:
+    set {_bagIt} to slot 18 of {_p}'s inventory
+    if {_bagIt} is air:
+        return false
+    # System_Bag의 함수(파일 간 직접 변수 수정 금지, 함수 호출은 허용)
+    if bag_is_script_bag({_bagIt}) is true:
+        return true
+    return false
+
+on inventory click:
+    if name of event-inventory contains "{@LOOT_GUI_TITLE}":
+        cancel event
+        if event-item is not set:
+            stop
+        if event-item is air:
+            stop
+
+        # 레이드 중에만
+        if {in_raid::%player%} is not true:
+            stop
+
+        # 가방 착용 체크
+        if tk_has_bag_equipped(player) is false:
+            send "{@p} 가방(슬롯 18)이 없어 루팅할 수 없습니다." to player
+            stop
+
+        # 인벤 빈 슬롯 체크(9=갑옷칸, 18=가방칸은 제외)
+        set {_empty} to tk_find_empty_loot_slot(player)
+        if {_empty} < 0:
+            send "{@p} 인벤토리가 가득 찼습니다." to player
+            stop
+
+        set slot {_empty} of player's inventory to event-item
+
+        # ✅ 네 Skript 호환: 슬롯 번호는 index of event-slot
+        set {_s} to index of event-slot
+        # ✅ 컨테이너 저장 루팅에서도 제거 (재오픈 무한 생성 방지)
+        set {_ck} to {temp::lootgui::%player%}
+        if {_ck} is set:
+            delete {container::loot::%{_ck}%::slot::%{_s}%}
+
+        if {_s} is set:
+            set slot {_s} of event-inventory to air
+
+        send "{@p} 아이템을 인벤토리에 넣었습니다." to player
+        stop
+
+# 루팅 GUI 닫힘 -> 임시 키 정리
+on inventory close:
+    if name of event-inventory contains "{@LOOT_GUI_TITLE}":
+        delete {temp::lootgui::%player%}
+
+# ======================================================
+# [2] QA/운영 커맨드: 컨테이너/키/잠금
+# ======================================================
+command /상자등록 <text>:
+    permission: op
+    trigger:
+        if tk_is_container_type(arg-1) is false:
+            send "{@p} 타입: SAFE / DUFFLE / TOOLBOX / CRATE" to player
+            stop
+
+        set {_b} to targeted block
+        if {_b} is not set:
+            send "{@p} 바라보는 블록이 없습니다." to player
+            stop
+
+        if {_b} is not chest:
+            if {_b} is not barrel:
+                send "{@p} 상자/배럴만 등록 가능합니다." to player
+                stop
+
+        set {_loc} to location of {_b}
+        set {_k} to tk_loc_key({_loc})
+
+        set {container::reg::%{_k}%::type} to arg-1
+        set {container::reg::%{_k}%::loc} to {_loc}
+        send "{@p} 컨테이너 등록 완료: &e%arg-1% &7(%{_k}%)" to player
+
+command /상자해제:
+    permission: op
+    trigger:
+        set {_b} to targeted block
+        if {_b} is not set:
+            stop
+        set {_k} to tk_loc_key(location of {_b})
+
+        delete {container::reg::%{_k}%::*}
+        delete {lock::container::%{_k}%}
+        send "{@p} 컨테이너 등록/잠금 해제 완료." to player
+
+command /상자리셋:
+    permission: op
+    trigger:
+        set {_b} to targeted block
+        if {_b} is not set:
+            stop
+        if {_b} is not chest:
+            if {_b} is not barrel:
+                send "{@p} 상자/배럴만 리셋 가능합니다." to player
+                stop
+
+        set {_k} to tk_loc_key(location of {_b})
+        delete {container::loot::%{_k}%::*}
+        send "{@p} 이 컨테이너 루팅을 리셋했습니다. 다음 오픈 시 새로 생성됩니다." to player
+
+
+command /키등록 <text> <text>:
+    permission: op
+    trigger:
+        set {key::name::%arg-1%} to arg-2
+        send "{@p} 키 등록 완료: &e%arg-1% &7-> %arg-2%" to player
+
+command /키생성 <text>:
+    permission: op
+    trigger:
+        set {_id} to arg-1
+        set {_nm} to {key::name::%{_id}%}
+        if {_nm} is not set:
+            set {_nm} to "&e열쇠 [%{_id}%]"
+        give tripwire hook named "%{_nm}%" with lore "&8KEY: %{_id}%" and "&7(모루로 위조 불가)" to player
+        send "{@p} 키 지급: &e%{_id}%" to player
+
+command /잠금관리:
+    permission: op
+    trigger:
+        set {_b} to targeted block
+        if {_b} is not set:
+            send "{@p} 바라보는 블록이 없습니다." to player
+            stop
+
+        set {lockui::targetloc::%player%} to location of {_b}
+        set {lockui::targetkey::%player%} to tk_loc_key(location of {_b})
+        tk_open_lock_gui(player)
+
+function tk_open_lock_gui(p: player):
+    set {_loc} to {lockui::targetloc::%{_p}%}
+    set {_k} to {lockui::targetkey::%{_p}%}
+    if {_loc} is not set:
+        stop
+    if {_k} is not set:
+        stop
+
+    set {_gui} to chest inventory with 3 rows named "{@LOCK_GUI_TITLE}"
+
+    set slot 4 of {_gui} to paper named "&f대상 블록" with lore "&7%world of {_loc}% (%x-coord of {_loc}%, %y-coord of {_loc}%, %z-coord of {_loc}%)"
+
+    set {_ck} to {lock::container::%{_k}%}
+    if {_ck} is not set:
+        set {_ck} to "없음"
+    set {_dk} to {lock::door::%{_k}%}
+    if {_dk} is not set:
+        set {_dk} to "없음"
+
+    set slot 11 of {_gui} to chest named "&6컨테이너 잠금 설정" with lore "&7현재 KEY_ID: &f%{_ck}%" and "&e클릭 후 채팅으로 KEY_ID 입력"
+    set slot 13 of {_gui} to oak door named "&e문 잠금 설정" with lore "&7현재 KEY_ID: &f%{_dk}%" and "&e클릭 후 채팅으로 KEY_ID 입력"
+    set slot 15 of {_gui} to barrier named "&c잠금 해제" with lore "&7컨테이너/문 잠금 모두 제거"
+    set slot 26 of {_gui} to barrier named "&c닫기"
+    open {_gui} to {_p}
+
+on inventory click:
+    if name of event-inventory is "{@LOCK_GUI_TITLE}":
+        cancel event
+
+        if clicked slot is 26:
+            close player's inventory
+            stop
+
+        if {lockui::targetkey::%player%} is not set:
+            close player's inventory
+            stop
+
+        if clicked slot is 11:
+            set {lockui::mode::%player%} to "CONTAINER"
+            close player's inventory
+            send "{@p} 컨테이너 잠금 KEY_ID를 채팅으로 입력하세요." to player
+            stop
+
+        if clicked slot is 13:
+            set {lockui::mode::%player%} to "DOOR"
+            close player's inventory
+            send "{@p} 문 잠금 KEY_ID를 채팅으로 입력하세요." to player
+            stop
+
+        if clicked slot is 15:
+            set {_k} to {lockui::targetkey::%player%}
+            delete {lock::container::%{_k}%}
+            delete {lock::door::%{_k}%}
+            send "{@p} 잠금 해제 완료." to player
+            tk_open_lock_gui(player)
+            stop
+
+on chat:
+    if {lockui::mode::%player%} is set:
+        cancel event
+        set {_k} to {lockui::targetkey::%player%}
+        if {_k} is not set:
+            delete {lockui::mode::%player%}
+            stop
+
+        set {_keyid} to message
+        if {_keyid} is "":
+            send "{@p} KEY_ID가 비어있습니다." to player
+            stop
+
+        if {lockui::mode::%player%} is "CONTAINER":
+            set {lock::container::%{_k}%} to {_keyid}
+            send "{@p} 컨테이너 잠금 설정: &e%{_keyid}%" to player
+        else if {lockui::mode::%player%} is "DOOR":
+            set {lock::door::%{_k}%} to {_keyid}
+            send "{@p} 문 잠금 설정: &e%{_keyid}%" to player
+
+        delete {lockui::mode::%player%}
+        tk_open_lock_gui(player)
+        stop
+
+# ======================================================
+# [3] 루팅 설정 GUI (아이템 등록 + base/custom 가중치)
+# ======================================================
+function tk_next_type(t: text) :: text:
+    if {_t} is "SAFE":
+        return "DUFFLE"
+    if {_t} is "DUFFLE":
+        return "TOOLBOX"
+    if {_t} is "TOOLBOX":
+        return "CRATE"
+    return "SAFE"
+
+function tk_next_cat(c: text) :: text:
+    if {_c} is "VALUE":
+        return "HIDEOUT"
+    if {_c} is "HIDEOUT":
+        return "JUNK"
+    if {_c} is "JUNK":
+        return "AMMO"
+    return "VALUE"
+
+function tk_open_loot_cfg(p: player):
+    set {_t} to {lootui::type::%{_p}%}
+    if {_t} is not set:
+        set {_t} to "CRATE"
+        set {lootui::type::%{_p}%} to {_t}
+
+    set {_c} to {lootui::cat::%{_p}%}
+    if {_c} is not set:
+        set {_c} to "JUNK"
+        set {lootui::cat::%{_p}%} to {_c}
+
+    set {_gui} to chest inventory with 6 rows named "{@LOOT_CFG_TITLE}"
+
+    set slot 10 of {_gui} to chest named "&e컨테이너 타입" with lore "&7현재: &f%{_t}%" and "&e클릭: 순환"
+    set slot 12 of {_gui} to paper named "&e카테고리" with lore "&7현재: &f%{_c}%" and "&e클릭: 순환"
+
+    set slot 14 of {_gui} to anvil named "&a아이템 등록" with lore "&7손에 든 아이템을 레지스트리에 등록" and "&7클릭 후 채팅에 ITEM_ID 입력" and "&7(현재 카테고리로 등록)"
+
+    set slot 28 of {_gui} to lime dye named "&a기본 가중치 설정" with lore "&7손 아이템(ID 마커 필요)" and "&7클릭 후 채팅: 숫자"
+    set slot 30 of {_gui} to light blue dye named "&b커스텀 가중치 설정" with lore "&7타입=%{_t}%/%{_c}% 전용" and "&7손 아이템(ID 마커 필요)" and "&7클릭 후 채팅: 숫자"
+    set slot 32 of {_gui} to barrier named "&c가중치 삭제" with lore "&7손 아이템(ID 마커 필요)" and "&7base+custom 제거"
+
+    set slot 45 of {_gui} to barrier named "&c닫기"
+
+    set {_s} to 0
+    loop {loot::cat::%{_c}%::*}:
+        if {_s} > 17:
+            stop
+        set {_id} to loop-value
+        set {_b} to {loot::base::%{_c}%::%{_id}%}
+        if {_b} is not set:
+            set {_b} to 0
+        set {_cu} to {loot::custom::%{_t}%::%{_c}%::%{_id}%}
+        if {_cu} is not set:
+            set {_cu} to 0
+        set {_tw} to {_b} + {_cu}
+        set slot {_s} of {_gui} to paper named "&f%{_id}%" with lore "&7base: &f%{_b}%" and "&7custom: &f%{_cu}%" and "&7total: &e%{_tw}%"
+        add 1 to {_s}
+
+    open {_gui} to {_p}
+
+command /루팅설정:
+    permission: op
+    trigger:
+        set {lootui::type::%player%} to "CRATE"
+        set {lootui::cat::%player%} to "JUNK"
+        tk_open_loot_cfg(player)
+
+on inventory click:
+    if name of event-inventory is "{@LOOT_CFG_TITLE}":
+        cancel event
+
+        if clicked slot is 45:
+            close player's inventory
+            stop
+
+        if clicked slot is 10:
+            set {lootui::type::%player%} to tk_next_type({lootui::type::%player%})
+            tk_open_loot_cfg(player)
+            stop
+
+        if clicked slot is 12:
+            set {lootui::cat::%player%} to tk_next_cat({lootui::cat::%player%})
+            tk_open_loot_cfg(player)
+            stop
+
+        if clicked slot is 14:
+            if player's tool is air:
+                send "{@p} 손에 등록할 아이템을 들고 사용하세요." to player
+                stop
+            set {lootui::chat::%player%} to "REG_ID"
+            close player's inventory
+            send "{@p} 등록할 ITEM_ID를 채팅으로 입력하세요. (예: GAS_ANALYZER)" to player
+            stop
+
+        if clicked slot is 28:
+            set {_id} to tk_get_id_from_item(player's tool)
+            if {_id} is "":
+                send "{@p} 손 아이템에 ID 마커가 없습니다. 먼저 '아이템 등록'을 하세요." to player
+                stop
+            set {lootui::tmpid::%player%} to {_id}
+            set {lootui::chat::%player%} to "SET_BASE"
+            close player's inventory
+            send "{@p} 기본 가중치를 숫자로 입력하세요. (ID=%{_id}%)" to player
+            stop
+
+        if clicked slot is 30:
+            set {_id} to tk_get_id_from_item(player's tool)
+            if {_id} is "":
+                send "{@p} 손 아이템에 ID 마커가 없습니다. 먼저 '아이템 등록'을 하세요." to player
+                stop
+            set {lootui::tmpid::%player%} to {_id}
+            set {lootui::chat::%player%} to "SET_CUSTOM"
+            close player's inventory
+            send "{@p} 커스텀 가중치를 숫자로 입력하세요. (ID=%{_id}%)" to player
+            stop
+
+        if clicked slot is 32:
+            set {_id} to tk_get_id_from_item(player's tool)
+            if {_id} is "":
+                send "{@p} 손 아이템에 ID 마커가 없습니다." to player
+                stop
+            set {_t} to {lootui::type::%player%}
+            set {_c} to {lootui::cat::%player%}
+            delete {loot::base::%{_c}%::%{_id}%}
+            delete {loot::custom::%{_t}%::%{_c}%::%{_id}%}
+            send "{@p} 가중치 삭제 완료: %{_id}%" to player
+            tk_open_loot_cfg(player)
+            stop
+
+on chat:
+    if {lootui::chat::%player%} is set:
+        cancel event
+        set {_stage} to {lootui::chat::%player%}
+
+        set {_t} to {lootui::type::%player%}
+        set {_c} to {lootui::cat::%player%}
+        if {_t} is not set:
+            set {_t} to "CRATE"
+        if {_c} is not set:
+            set {_c} to "JUNK"
+
+        if {_stage} is "REG_ID":
+            set {_id} to message
+            if {_id} is "":
+                send "{@p} ITEM_ID가 비어있습니다." to player
+                stop
+            tk_register_item({_id}, player's tool, {_c})
+            send "{@p} 레지스트리 등록 완료: &e%{_id}% &7(cat=%{_c}%)" to player
+            delete {lootui::chat::%player%}
+            tk_open_loot_cfg(player)
+            stop
+
+        if {_stage} is "SET_BASE":
+            set {_id} to {lootui::tmpid::%player%}
+            delete {lootui::tmpid::%player%}
+            set {_w} to message parsed as number
+            if {_w} <= 0:
+                delete {loot::base::%{_c}%::%{_id}%}
+                send "{@p} 기본 가중치 제거(0 이하 입력)." to player
+            else:
+                set {loot::base::%{_c}%::%{_id}%} to {_w}
+                send "{@p} 기본 가중치 설정: %{_id}% = %{_w}%" to player
+            delete {lootui::chat::%player%}
+            tk_open_loot_cfg(player)
+            stop
+
+        if {_stage} is "SET_CUSTOM":
+            set {_id} to {lootui::tmpid::%player%}
+            delete {lootui::tmpid::%player%}
+            set {_w} to message parsed as number
+            if {_w} <= 0:
+                delete {loot::custom::%{_t}%::%{_c}%::%{_id}%}
+                send "{@p} 커스텀 가중치 제거(0 이하 입력)." to player
+            else:
+                set {loot::custom::%{_t}%::%{_c}%::%{_id}%} to {_w}
+                send "{@p} 커스텀 가중치 설정: %{_t}%/%{_c}%/%{_id}% = %{_w}%" to player
+            delete {lootui::chat::%player%}
+            tk_open_loot_cfg(player)
+            stop
+
+# ======================================================
+# [MAP API] System_Raid_Map에서만 호출하는 얇은 API
+# - 다른 파일이 loot 변수를 직접 만지지 않게 하기 위함
+# ======================================================
+
+function tk_api_register_container(loc: location, type: text) :: boolean:
+    if tk_is_container_type({_type}) is false:
+        return false
+    set {_k} to tk_loc_key({_loc})
+    set {container::reg::%{_k}%::type} to {_type}
+    set {container::reg::%{_k}%::loc} to {_loc}
+    return true
+
+function tk_api_unregister_container(loc: location) :: boolean:
+    set {_k} to tk_loc_key({_loc})
+    delete {container::reg::%{_k}%::*}
+    delete {lock::container::%{_k}%}
+    return true
+
+function tk_api_lock_container(loc: location, keyid: text) :: boolean:
+    set {_k} to tk_loc_key({_loc})
+    if {_keyid} is "":
+        return false
+    set {lock::container::%{_k}%} to {_keyid}
+    return true
+
+function tk_api_lock_door(loc: location, keyid: text) :: boolean:
+    set {_k} to tk_loc_key({_loc})
+    if {_keyid} is "":
+        return false
+    set {lock::door::%{_k}%} to {_keyid}
+    return true
+
+function tk_api_unlock_all(loc: location) :: boolean:
+    set {_k} to tk_loc_key({_loc})
+    delete {lock::container::%{_k}%}
+    delete {lock::door::%{_k}%}
+    return true

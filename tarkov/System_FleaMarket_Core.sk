@@ -1,0 +1,365 @@
+options:
+    p: &d[플리] &f
+
+# ======================================================
+# [0] 플리 기본 설정
+# ======================================================
+
+on load:
+    if {flea::id} is not set:
+        set {flea::id} to 0
+
+    if {flea::tax::list} is not set:
+        set {flea::tax::list} to 0.05   # 등록 수수료
+    if {flea::tax::sell} is not set:
+        set {flea::tax::sell} to 0.08   # 판매 수수료
+
+    # 플리 금지 카테고리 (중복 추가 방지)
+    if {flea::ban::*} is not set:
+        add "AMMO" to {flea::ban::*}
+        add "QUEST" to {flea::ban::*}
+
+on quit:
+    delete {temp::flea::sellitem::%player%}
+
+# ======================================================
+# [0-1] 플리 내부 유틸
+# - 순정 Skript만 사용 (외부 get_item_id/get_item_category/give_item 의존 제거)
+# ======================================================
+
+function flea_item_name(it: itemstack) :: text:
+    set {_n} to uncolored name of {_it}
+    if {_n} is not set:
+        set {_n} to "%type of {_it}%"
+    return {_n}
+
+function flea_get_category(it: itemstack) :: text:
+    # 아주 단순 분류 (필요하면 여기만 확장)
+    set {_n} to flea_item_name({_it})
+
+    # 탄약/탄 관련 이름 포함 → AMMO
+    if {_n} contains "탄약":
+        return "AMMO"
+    if {_n} contains "탄":
+        return "AMMO"
+    if {_n} contains "FMJ":
+        return "AMMO"
+    if {_n} contains "AP":
+        return "AMMO"
+    if {_n} contains "HP":
+        return "AMMO"
+
+    # 퀘스트 표기용 (예: 이름에 [QUEST] 같은 태그를 붙였다면)
+    if {_n} contains "[QUEST]":
+        return "QUEST"
+
+    return "ETC"
+
+function flea_get_npc_price(it: itemstack) :: number:
+    # NPC 최저가(바닥가) 룰: "이름" 기준 예시값
+    # (원하면 여기에 더 추가)
+    set {_n} to flea_item_name({_it})
+
+    if {_n} contains "LEDX":
+        return 250000
+    if {_n} is "의료 키트":
+        return 1200
+    if {_n} is "탄약 박스":
+        return 1500
+    if {_n} is "볼트":
+        return 300
+    if {_n} is "담배":
+        return 200
+
+    return 0
+
+function flea_has_one(p: player, it: itemstack) :: boolean:
+    if {_p} has 1 of {_it}:
+        return true
+    return false
+
+function flea_remove_one(p: player, it: itemstack) :: boolean:
+    if flea_has_one({_p}, {_it}) is true:
+        remove 1 of {_it} from {_p}'s inventory
+        return true
+    return false
+
+# ======================================================
+# [1] 플리 메인 명령어
+# ======================================================
+
+command /플리:
+    trigger:
+        open_flea_main(player)
+
+function open_flea_main(p: player):
+    set {_gui} to chest inventory with 3 rows named "&8[ 플리마켓 ]"
+
+    set slot 11 of {_gui} to emerald named "&a 구매"
+    set slot 13 of {_gui} to chest named "&e 판매 등록"
+    set slot 15 of {_gui} to barrier named "&c 등록 취소"
+
+    open {_gui} to {_p}
+
+# ======================================================
+# [2] 플리 메인 GUI 클릭
+# ======================================================
+
+on inventory click:
+    if name of event-inventory is "&8[ 플리마켓 ]":
+        cancel event
+
+        if clicked slot is 11:
+            open_flea_list(player)
+        else if clicked slot is 13:
+            open_flea_register(player)
+        else if clicked slot is 15:
+            open_flea_cancel(player)
+
+# ======================================================
+# [3] 판매 등록 GUI
+# ======================================================
+
+function open_flea_register(p: player):
+    set {_gui} to chest inventory with 3 rows named "&8[ 플리 등록 ]"
+    set slot 13 of {_gui} to paper named "&e 아이템을 손에 들고 클릭"
+    set slot 26 of {_gui} to arrow named "&c 뒤로가기"
+    open {_gui} to {_p}
+
+on inventory click:
+    if name of event-inventory is "&8[ 플리 등록 ]":
+        cancel event
+
+        if clicked slot is 26:
+            open_flea_main(player)
+            stop
+
+        # 손 아이템 확인
+        set {_hand} to player's tool
+        if {_hand} is air:
+            send "{@p} 손에 아이템을 들어주세요." to player
+            stop
+
+        # 1개만 판매 (스택이면 1개만)
+        set {_sell} to 1 of {_hand}
+
+        # 카테고리 체크 (탄약/퀘스트 등)
+        set {_cat} to flea_get_category({_sell})
+        if {_cat} is in {flea::ban::*}:
+            send "{@p} 이 아이템은 플리에 등록할 수 없습니다. (분류: %{_cat}%)" to player
+            stop
+
+        # 임시 저장 후 채팅으로 가격 입력받기
+        set {temp::flea::sellitem::%player%} to {_sell}
+        close player's inventory
+        send "{@p} 채팅에 판매 가격(숫자)을 입력하세요." to player
+        send "{@p} (취소하려면 0 입력)" to player
+
+# ======================================================
+# [4] 가격 입력
+# ======================================================
+
+on chat:
+    if {temp::flea::sellitem::%player%} is set:
+        cancel event
+
+        if message is not a number:
+            send "{@p} 숫자만 입력하세요." to player
+            stop
+
+        set {_price} to message parsed as number
+        if {_price} <= 0:
+            delete {temp::flea::sellitem::%player%}
+            send "{@p} 판매 등록을 취소했습니다." to player
+            stop
+
+        set {_it} to {temp::flea::sellitem::%player%}
+        delete {temp::flea::sellitem::%player%}
+
+        register_flea(player, {_it}, {_price})
+
+# ======================================================
+# [5] 플리 등록 처리
+# ======================================================
+
+function register_flea(p: player, it: itemstack, price: number):
+    set {_u} to uuid of {_p}
+
+    # 실제로 아직도 그 아이템 1개를 가지고 있는지 확인
+    if flea_has_one({_p}, {_it}) is false:
+        send "{@p} 등록 실패: 해당 아이템이 인벤토리에 없습니다." to {_p}
+        stop
+
+    set {_base} to flea_get_npc_price({_it})
+    if {_price} < {_base}:
+        send "{@p} NPC 판매가(%{_base}%)보다 낮게 등록할 수 없습니다." to {_p}
+        stop
+
+    set {_fee} to {_price} * {flea::tax::list}
+    if {money::%{_u}%} is not set:
+        set {money::%{_u}%} to 0
+
+    if {money::%{_u}%} < {_fee}:
+        send "{@p} 등록 수수료가 부족합니다. (필요: %{_fee}%)" to {_p}
+        stop
+
+    # 수수료 차감
+    remove {_fee} from {money::%{_u}%}
+
+    # 아이템 제거(등록 시 소멸)
+    if flea_remove_one({_p}, {_it}) is false:
+        send "{@p} 등록 실패: 아이템 제거에 실패했습니다." to {_p}
+        add {_fee} to {money::%{_u}%}
+        stop
+
+    # 새 listing ID
+    add 1 to {flea::id}
+    set {_fid} to {flea::id}
+
+    # listing 저장
+    set {flea::listing::%{_fid}%::seller} to {_u}
+    set {flea::listing::%{_fid}%::price} to {_price}
+    set {flea::listing::%{_fid}%::item} to {_it}
+    set {flea::listing::%{_fid}%::name} to flea_item_name({_it})
+
+    # 활성 목록
+    add {_fid} to {flea::list::*}
+
+    send "{@p} 플리에 등록되었습니다. (ID %{_fid}%)" to {_p}
+
+# ======================================================
+# [6] 플리 목록 GUI
+# ======================================================
+
+function open_flea_list(p: player):
+    set {_gui} to chest inventory with 6 rows named "&8[ 플리 구매 ]"
+    set {_slot} to 0
+
+    loop {flea::list::*}:
+        set {_fid} to loop-value
+        set {_itemname} to {flea::listing::%{_fid}%::name}
+        set {_price} to {flea::listing::%{_fid}%::price}
+
+        if {_itemname} is set:
+            if {_slot} >= 54:
+                stop loop
+
+            set slot {_slot} of {_gui} to paper named "&f%{_itemname}%" with lore "&7가격: %{_price}%" and "&7ID: %{_fid}%"
+            add 1 to {_slot}
+
+    set slot 53 of {_gui} to arrow named "&c 뒤로가기"
+    open {_gui} to {_p}
+
+# ======================================================
+# [7] 구매 처리
+# ======================================================
+
+on inventory click:
+    if name of event-inventory is "&8[ 플리 구매 ]":
+        cancel event
+
+        if clicked slot is 53:
+            open_flea_main(player)
+            stop
+
+        if event-item is not set:
+            stop
+        if event-item is air:
+            stop
+
+        set {_lore::*} to lore of event-item
+        if {_lore::2} is not set:
+            stop
+
+        set {_fidLine} to uncolored {_lore::2}
+        replace "ID: " with "" in {_fidLine}
+        replace "ID " with "" in {_fidLine}
+        set {_fid} to {_fidLine}
+
+        buy_flea_item(player, {_fid})
+
+function buy_flea_item(p: player, fid: text):
+    set {_price} to {flea::listing::%{_fid}%::price}
+    if {_price} is not set:
+        send "{@p} 이미 판매되었거나 존재하지 않는 등록입니다." to {_p}
+        stop
+
+    set {_seller} to {flea::listing::%{_fid}%::seller}
+    set {_u} to uuid of {_p}
+
+    if {money::%{_u}%} is not set:
+        set {money::%{_u}%} to 0
+    if {money::%{_seller}%} is not set:
+        set {money::%{_seller}%} to 0
+
+    if {money::%{_u}%} < {_price}:
+        send "{@p} 잔액이 부족합니다." to {_p}
+        stop
+
+    remove {_price} from {money::%{_u}%}
+
+    set {_tax} to {_price} * {flea::tax::sell}
+    add {_price} - {_tax} to {money::%{_seller}%}
+
+    # 아이템 지급 (등록 시 소멸 → 구매 시 생성 느낌으로, 저장해둔 itemstack 1개 지급)
+    give {flea::listing::%{_fid}%::item} to {_p}
+
+    # listing 제거 + 목록에서 제거
+    delete {flea::listing::%{_fid}%::*}
+    remove {_fid} from {flea::list::*}
+
+    send "{@p} 구매 완료!" to {_p}
+
+# ======================================================
+# [8] 등록 취소 (수수료 반환 ❌)
+# ======================================================
+
+function open_flea_cancel(p: player):
+    set {_gui} to chest inventory with 4 rows named "&8[ 플리 취소 ]"
+    set {_slot} to 0
+    set {_u} to uuid of {_p}
+
+    loop {flea::list::*}:
+        set {_fid} to loop-value
+        if {flea::listing::%{_fid}%::seller} is {_u}:
+            if {_slot} >= 36:
+                stop loop
+            set {_n} to {flea::listing::%{_fid}%::name}
+            if {_n} is not set:
+                set {_n} to "등록 %{_fid}%"
+
+            set slot {_slot} of {_gui} to barrier named "&cID %{_fid}% 취소" with lore "&7%{_n}%"
+            add 1 to {_slot}
+
+    set slot 35 of {_gui} to arrow named "&c 뒤로가기"
+    open {_gui} to {_p}
+
+on inventory click:
+    if name of event-inventory is "&8[ 플리 취소 ]":
+        cancel event
+
+        if clicked slot is 35:
+            open_flea_main(player)
+            stop
+
+        if event-item is not set:
+            stop
+        if event-item is air:
+            stop
+
+        set {_name} to uncolored name of event-item
+        if {_name} is not set:
+            stop
+
+        replace "ID " with "" in {_name}
+        replace " 취소" with "" in {_name}
+
+        # 본인 것만 삭제
+        set {_fid} to {_name}
+        if {flea::listing::%{_fid}%::seller} is uuid of player:
+            delete {flea::listing::%{_fid}%::*}
+            remove {_fid} from {flea::list::*}
+            send "{@p} 등록이 취소되었습니다. (수수료는 반환되지 않습니다)" to player
+            open_flea_cancel(player)
+        else:
+            send "{@p} 본인 등록만 취소할 수 있습니다." to player

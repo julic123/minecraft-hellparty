@@ -1,0 +1,1171 @@
+options:
+    p: &4[Combat] &f
+    GUN_RANGE: 20
+
+# =========================================
+# System_Mob_Combat.sk (Tarkov 시스템)
+# 순정 Skript 문법 / 안정성 우선 / 에러 0 목표
+#
+# 변경 요약(요청 반영):
+# 1) 전리품은 "바닥에 설치되는 상자(체스트 블록)"로 생성
+# 2) 전리품 GUI는 9칸(1줄)만 표시
+# 3) 몹 처치 시 GUI 자동 오픈 금지 (전투 중 방해 제거)
+# 4) SCAV/AMC/BOSS 전리품을 OP가 등록/수정/삭제 + 가중치(확률) 수정 가능한 설정창 추가
+# 5) 등록 아이템은 종이 고정 X: 손에 든 어떤 마크 아이템이든 등록 가능
+#
+# 주의(프로젝트 규칙):
+# - 파일 간 직접 변수 수정 금지: 이 파일은 {bag::...} 같은 타 파일 변수에 "쓰기"를 하지 않는다.
+#   (전리품 획득은 give로 처리. 가방 연동은 System_Bag에 얇은 API 추가 후 이 파일에서 호출 방식으로 확장)
+# =========================================
+
+# =========================================
+# [0.5] 태그 호환 유틸 (scoreboard tag / 변수 플랜B)
+# - Raid_Map에서 scoreboard tag가 깨지는 환경 대비
+# - {mobtag::uuid} / {mobtype::uuid}는 Raid_Map에서만 “쓴다”(여긴 읽기만)
+# =========================================
+function tk_is_tk_mob(e: entity) :: boolean:
+    if {_e} is not set:
+        return false
+
+    # 1) scoreboard tag가 정상인 환경
+    if {_e} has scoreboard tag "tk_mob":
+        return true
+
+    # 2) 플랜B: 변수 표식
+    set {_id} to uuid of {_e}
+    if {mobtag::%{_id}%} is "tk_mob":
+        return true
+
+    return false
+
+function tk_get_tk_mob_type(e: entity) :: text:
+    if {_e} is not set:
+        return "SCAV"
+
+    # 1) scoreboard tag
+    if {_e} has scoreboard tag "BOSS":
+        return "BOSS"
+    if {_e} has scoreboard tag "AMC":
+        return "AMC"
+    if {_e} has scoreboard tag "SCAV":
+        return "SCAV"
+
+    # 2) 플랜B: 변수
+    set {_id} to uuid of {_e}
+    if {mobtype::%{_id}%} is set:
+        return "%{mobtype::%{_id}%}%"
+
+    return "SCAV"
+
+function tk_find_raid_target(m: entity, r: number) :: player:
+    if {_m} is not set:
+        return {_t}
+
+    set {_best} to 999999
+    delete {_t}
+
+    loop players in radius {_r} around {_m}:
+        # 하이드아웃/비레이드 스킵
+        if {in_hideout::%loop-player%} is true:
+            continue
+        if {in_raid::%loop-player%} is not true:
+            continue
+
+        set {_d} to distance between {_m} and loop-player
+        if {_d} < {_best}:
+            set {_best} to {_d}
+            set {_t} to loop-player
+
+    return {_t}
+
+# =========================================
+# [0.55] 숫자 안전 유틸 (NaN / Infinity 방지)
+# - Skript 파싱/계산 중 NaN이 섞이면 Minecraft가 [NAN-HEALTH]를 뿜는다
+# - NaN은 비교문(<, >)이 전부 false로 빠져서 그대로 전파되기 쉬움
+# =========================================
+function tk_is_bad_number(n: number) :: boolean:
+    if {_n} is not set:
+        return true
+
+    set {_t} to "%{_n}%"
+    if {_t} contains "NaN":
+        return true
+    if {_t} contains "nan":
+        return true
+    if {_t} contains "Infinity":
+        return true
+    if {_t} contains "infinity":
+        return true
+
+    return false
+
+function tk_safe_number(n: number, min: number, max: number, fallback: number) :: number:
+    if {_n} is not set:
+        return {_fallback}
+    if tk_is_bad_number({_n}) is true:
+        return {_fallback}
+
+    set {_v} to {_n}
+    if {_v} < {_min}:
+        set {_v} to {_min}
+    if {_v} > {_max}:
+        set {_v} to {_max}
+    return {_v}
+
+# =========================================
+# [0.6] TACZ 관통력(로어) 파싱
+# - TACZ json을 Skript로 직접 읽진 못하니, 아이템 로어 표시를 소스로 사용
+# - 예: "50% 방어구 관통력" -> 0.50 반환
+# =========================================
+function tk_get_pen_from_item(i: item) :: number:
+    if {_i} is not set:
+        return 0
+
+    set {_pen} to 0
+    set {_l::*} to lore of {_i}
+
+    loop {_l::*}:
+        set {_line} to uncolored "%loop-value%"
+
+        if {_line} contains "방어구 관통력":
+            set {_num} to ""
+            set {_len} to length of {_line}
+
+            loop {_len} times:
+                set {_c} to subtext of {_line} from loop-number to loop-number
+
+                if {_c} is "0":
+                    set {_num} to "%{_num}%0"
+                else if {_c} is "1":
+                    set {_num} to "%{_num}%1"
+                else if {_c} is "2":
+                    set {_num} to "%{_num}%2"
+                else if {_c} is "3":
+                    set {_num} to "%{_num}%3"
+                else if {_c} is "4":
+                    set {_num} to "%{_num}%4"
+                else if {_c} is "5":
+                    set {_num} to "%{_num}%5"
+                else if {_c} is "6":
+                    set {_num} to "%{_num}%6"
+                else if {_c} is "7":
+                    set {_num} to "%{_num}%7"
+                else if {_c} is "8":
+                    set {_num} to "%{_num}%8"
+                else if {_c} is "9":
+                    set {_num} to "%{_num}%9"
+                else if {_c} is ".":
+                    set {_num} to "%{_num}%."
+
+            if {_num} is not "":
+                set {_v} to {_num} parsed as number
+                if {_v} is set:
+                    if tk_is_bad_number({_v}) is false:
+                        set {_pen} to {_v} / 100
+
+            stop loop
+
+    set {_pen} to tk_safe_number({_pen}, 0, 0.95, 0)
+    return {_pen}
+
+# =========================================
+# [0.7] 타입 정규화 (AMC/PMC 호환)
+# =========================================
+function tk_norm_type(t: text) :: text:
+    if {_t} is not set:
+        return "SCAV"
+    if {_t} is "PMC":
+        return "AMC"
+    return "%{_t}%"
+
+# =========================================
+# [0.8] 전리품 상자(블록) 키 유틸
+# =========================================
+
+function tk_find_crate_spot(base: location) :: location:
+    set {_l1} to location of block at {_base}
+    if "%type of block at {_l1}%" is "air":
+        return {_l1}
+
+    set {_l2} to {_l1}
+    add 1 to y-coordinate of {_l2}
+    if "%type of block at {_l2}%" is "air":
+        return {_l2}
+
+    set {_l3} to {_l1}
+    add 2 to y-coordinate of {_l3}
+    if "%type of block at {_l3}%" is "air":
+        return {_l3}
+
+    return {_l1}
+
+# =========================================
+# [0.85] 전리품 레지스트리(등록/확률=가중치)
+#
+# {moblootreg::SCAV::max} = number
+# {moblootreg::SCAV::%i%::item} = item
+# {moblootreg::SCAV::%i%::w} = number
+# (AMC/BOSS 동일)
+# =========================================
+function tk_get_reg_max(t: text) :: number:
+    set {_tt} to tk_norm_type({_t})
+    if {moblootreg::%{_tt}%::max} is set:
+        return {moblootreg::%{_tt}%::max}
+    return 0
+
+function tk_set_reg_max(t: text, n: number):
+    set {_tt} to tk_norm_type({_t})
+    set {moblootreg::%{_tt}%::max} to tk_safe_number({_n}, 0, 200, 0)
+
+function tk_add_reg_item(t: text, it: item, w: number):
+    set {_tt} to tk_norm_type({_t})
+    if {_it} is not set:
+        stop
+
+    set {_w2} to tk_safe_number({_w}, 1, 1000000, 1)
+    set {_max} to tk_get_reg_max({_tt})
+    add 1 to {_max}
+    tk_set_reg_max({_tt}, {_max})
+
+    set {moblootreg::%{_tt}%::%{_max}%::item} to {_it}
+    set {moblootreg::%{_tt}%::%{_max}%::w} to {_w2}
+
+function tk_set_reg_weight(t: text, idx: number, w: number):
+    set {_tt} to tk_norm_type({_t})
+    set {_i} to tk_safe_number({_idx}, 1, 200, 1)
+    if {moblootreg::%{_tt}%::%{_i}%::item} is not set:
+        stop
+    set {moblootreg::%{_tt}%::%{_i}%::w} to tk_safe_number({_w}, 1, 1000000, 1)
+
+function tk_del_reg_item(t: text, idx: number):
+    set {_tt} to tk_norm_type({_t})
+    set {_i} to tk_safe_number({_idx}, 1, 200, 1)
+    delete {moblootreg::%{_tt}%::%{_i}%::item}
+    delete {moblootreg::%{_tt}%::%{_i}%::w}
+
+function tk_pick_reg_item(t: text) :: item:
+    set {_tt} to tk_norm_type({_t})
+    set {_max} to tk_get_reg_max({_tt})
+    if {_max} <= 0:
+        return air
+
+    set {_total} to 0
+    loop {_max} times:
+        set {_i} to loop-number
+        if {moblootreg::%{_tt}%::%{_i}%::item} is set:
+            set {_w} to {moblootreg::%{_tt}%::%{_i}%::w}
+            if {_w} is not set:
+                set {_w} to 1
+            add tk_safe_number({_w}, 1, 1000000, 1) to {_total}
+
+    if {_total} <= 0:
+        return air
+
+    set {_r} to random integer between 1 and {_total}
+    loop {_max} times:
+        set {_i} to loop-number
+        if {moblootreg::%{_tt}%::%{_i}%::item} is set:
+            set {_w} to {moblootreg::%{_tt}%::%{_i}%::w}
+            if {_w} is not set:
+                set {_w} to 1
+            set {_w2} to tk_safe_number({_w}, 1, 1000000, 1)
+            remove {_w2} from {_r}
+            if {_r} <= 0:
+                return {moblootreg::%{_tt}%::%{_i}%::item}
+
+    return air
+
+# =========================================
+# [0.9] 기본값 (최초 1회)
+# =========================================
+on load:
+    # ---------- SCAV ----------
+    if {mob::hp::SCAV} is not set:
+        set {mob::hp::SCAV} to 20
+        set {mob::def::SCAV} to 30
+        set {mob::gun::rate::SCAV} to 30
+        set {mob::gun::accuracy::SCAV} to 35
+        set {mob::gun::damage::SCAV} to 4
+        set {mob::gun::pen::SCAV} to 0.15
+        set {mob::gun::ammo::SCAV} to "HP"
+
+        # --- 총알 스탯(추가) ---
+        set {mob::gun::speed::SCAV} to 55
+        set {mob::gun::mag::SCAV} to 20
+        set {mob::gun::reload::SCAV} to 60
+        set {mob::gun::penchance::SCAV} to 15
+
+    # ---------- AMC ----------
+    if {mob::hp::AMC} is not set:
+        set {mob::hp::AMC} to 40
+        set {mob::def::AMC} to 60
+        set {mob::gun::rate::AMC} to 15
+        set {mob::gun::accuracy::AMC} to 65
+        set {mob::gun::damage::AMC} to 7
+        set {mob::gun::pen::AMC} to 0.35
+        set {mob::gun::ammo::AMC} to "FMJ"
+
+        set {mob::gun::speed::AMC} to 75
+        set {mob::gun::mag::AMC} to 30
+        set {mob::gun::reload::AMC} to 50
+        set {mob::gun::penchance::AMC} to 35
+
+    # ---------- BOSS ----------
+    if {mob::hp::BOSS} is not set:
+        set {mob::hp::BOSS} to 120
+        set {mob::def::BOSS} to 100
+        set {mob::gun::rate::BOSS} to 10
+        set {mob::gun::accuracy::BOSS} to 85
+        set {mob::gun::damage::BOSS} to 10
+        set {mob::gun::pen::BOSS} to 0.6
+        set {mob::gun::ammo::BOSS} to "AP"
+
+        set {mob::gun::speed::BOSS} to 90
+        set {mob::gun::mag::BOSS} to 45
+        set {mob::gun::reload::BOSS} to 45
+        set {mob::gun::penchance::BOSS} to 60
+
+    # ---------- 전리품 확률(기본 드랍) ----------
+    if {drop::armor::SCAV} is not set:
+        set {drop::armor::SCAV} to 20
+        set {drop::armor::AMC} to 45
+        set {drop::armor::BOSS} to 80
+
+        set {drop::gun::SCAV} to 10
+        set {drop::gun::AMC} to 35
+        set {drop::gun::BOSS} to 70
+
+        set {drop::bag::SCAV} to 15
+        set {drop::bag::AMC} to 40
+        set {drop::bag::BOSS} to 75
+
+    # ---------- 전리품 레지스트리(기본) ----------
+    if tk_get_reg_max("SCAV") <= 0:
+        tk_add_reg_item("SCAV", paper named "볼트", 20)
+        tk_add_reg_item("SCAV", paper named "담배", 15)
+        tk_add_reg_item("SCAV", paper named "탄피", 15)
+        tk_add_reg_item("SCAV", paper named "전자부품", 10)
+
+    if tk_get_reg_max("AMC") <= 0:
+        tk_add_reg_item("AMC", iron ingot, 10)
+        tk_add_reg_item("AMC", paper named "화약", 12)
+        tk_add_reg_item("AMC", experience bottle, 8)
+
+    if tk_get_reg_max("BOSS") <= 0:
+        tk_add_reg_item("BOSS", diamond, 5)
+        tk_add_reg_item("BOSS", netherite scrap, 2)
+        tk_add_reg_item("BOSS", enchanted book, 4)
+
+# =========================================
+# [0.95] 스폰 후 초기화 (summon 폴백 지원)
+# - 미초기화 tk_mob만 1회 처리: 체력/이름/장비/총스킨 적용
+# =========================================
+every 10 ticks:
+    loop all living entities:
+        set {_m} to loop-entity
+        if tk_is_tk_mob({_m}) is true:
+            set {_id} to uuid of {_m}
+            if {mob::init::%{_id}%} is true:
+                continue
+
+            set {mob::init::%{_id}%} to true
+            set {_type} to tk_get_tk_mob_type({_m})
+
+            if {mob::hp::%{_type}%} is set:
+                set max health of {_m} to {mob::hp::%{_type}%}
+                set health of {_m} to {mob::hp::%{_type}%}
+
+            if {_type} is "SCAV":
+                set name of {_m} to "&aSCAV"
+            else if {_type} is "AMC":
+                set name of {_m} to "&eAMC"
+            else if {_type} is "BOSS":
+                set name of {_m} to "&cBOSS"
+            set name of {_m} to colored name of {_m}
+
+            if {mob::equip::helmet::%{_type}%} is set:
+                set helmet of {_m} to {mob::equip::helmet::%{_type}%}
+            else:
+                if {_type} is "SCAV":
+                    set helmet of {_m} to leather helmet
+                else if {_type} is "AMC":
+                    set helmet of {_m} to iron helmet
+                else if {_type} is "BOSS":
+                    set helmet of {_m} to diamond helmet
+
+            if {mob::equip::chest::%{_type}%} is set:
+                set chestplate of {_m} to {mob::equip::chest::%{_type}%}
+            else:
+                if {_type} is "SCAV":
+                    set chestplate of {_m} to leather chestplate
+                else if {_type} is "AMC":
+                    set chestplate of {_m} to iron chestplate
+                else if {_type} is "BOSS":
+                    set chestplate of {_m} to diamond chestplate
+
+            if {mob::weapon::%{_type}%} is set:
+                set {_m}'s tool to {mob::weapon::%{_type}%}
+
+# =========================================
+# [1] 몹 설정 GUI (HP/DEF/스킨)
+# =========================================
+function open_mob_main(p: player):
+    set {_gui} to chest inventory with 3 rows named "&8[ 몹 설정 ]"
+    set slot 11 of {_gui} to zombie head named "&2 SCAV"
+    set slot 13 of {_gui} to iron chestplate named "&e AMC"
+    set slot 15 of {_gui} to wither skeleton skull named "&4 BOSS"
+    set slot 22 of {_gui} to chest named "&6 전리품 설정" with lore "&7SCAV/AMC/BOSS 전리품 등록/확률"
+    open {_gui} to {_p}
+
+function open_mob_detail(p: player):
+    set {_type} to {temp::mob_edit::%{_p}%}
+    set {_gui} to chest inventory with 6 rows named "&8[ %{_type}% 설정 ]"
+
+    set slot 11 of {_gui} to apple named "&c 체력 설정"
+    set slot 13 of {_gui} to iron ingot named "&e 방어력 설정"
+    set slot 15 of {_gui} to chest named "&6 총 스킨 설정"
+
+    set slot 29 of {_gui} to iron helmet named "&b 헬멧 스킨 설정"
+    set slot 33 of {_gui} to iron chestplate named "&b 갑옷 스킨 설정"
+
+    set slot 49 of {_gui} to arrow named "&c 뒤로가기"
+    open {_gui} to {_p}
+
+command /몹설정:
+    permission: op
+    trigger:
+        open_mob_main(player)
+
+# =========================================
+# [1.1] GUI 클릭 처리 (아이템 이동 방지 포함)
+# =========================================
+on inventory click:
+    # --- 메인 ---
+    if name of event-inventory is "&8[ 몹 설정 ]":
+        cancel event
+        set {_s} to index of event-slot
+        if {_s} is 11:
+            set {temp::mob_edit::%player%} to "SCAV"
+            open_mob_detail(player)
+            stop
+        if {_s} is 13:
+            set {temp::mob_edit::%player%} to "AMC"
+            open_mob_detail(player)
+            stop
+        if {_s} is 15:
+            set {temp::mob_edit::%player%} to "BOSS"
+            open_mob_detail(player)
+            stop
+        if {_s} is 22:
+            tk_open_loot_admin_main(player)
+            stop
+        stop
+
+    # --- 상세 ---
+    if name of event-inventory contains " 설정 ]":
+        # 전리품 UI는 별도 제목으로 구분
+        if name of event-inventory is "&8[ 전리품 상자 ]":
+            stop
+        if name of event-inventory is "&8[ 전리품 설정 ]":
+            stop
+        if name of event-inventory contains "&8[ 전리품: ":
+            stop
+
+        cancel event
+
+        set {_title} to name of event-inventory
+        set {_type} to "%{_title}%"
+        replace all "&8[ " with "" in {_type}
+        replace all " 설정 ]" with "" in {_type}
+
+        set {_s} to index of event-slot
+
+        if {_s} is 11:
+            set {admin_input::%player%} to "HP_%{_type}%"
+            send "{@p} &f채팅으로 &e%{_type}% &f체력(숫자)을 입력하세요." to player
+            close player's inventory
+            stop
+
+        if {_s} is 13:
+            set {admin_input::%player%} to "DEF_%{_type}%"
+            send "{@p} &f채팅으로 &e%{_type}% &f방어 수치(0~500)를 입력하세요." to player
+            close player's inventory
+            stop
+
+        if {_s} is 15:
+            set {admin_input::%player%} to "GUN_%{_type}%"
+            send "{@p} &f아래 &e플레이어 인벤&f에서 &e총 아이템을 클릭&f하세요." to player
+            stop
+
+        if {_s} is 29:
+            set {admin_input::%player%} to "HELM_%{_type}%"
+            send "{@p} &f아래 &e플레이어 인벤&f에서 &e헬멧 아이템을 클릭&f하세요." to player
+            stop
+
+        if {_s} is 33:
+            set {admin_input::%player%} to "CHEST_%{_type}%"
+            send "{@p} &f아래 &e플레이어 인벤&f에서 &e갑옷(가슴) 아이템을 클릭&f하세요." to player
+            stop
+
+        if {_s} is 49:
+            delete {admin_input::%player%}
+            open_mob_main(player)
+            stop
+
+    # --- 설정 모드: 플레이어 인벤에서 아이템 클릭으로 저장 ---
+    if {admin_input::%player%} is set:
+        if clicked inventory is player's inventory:
+            set {_mode} to {admin_input::%player%}
+
+            if {_mode} contains "GUN_":
+                cancel event
+                set {_item} to event-item
+                if {_item} is not air:
+                    set {_d::*} to split {_mode} at "_"
+                    set {mob::weapon::%{_d::2}%} to {_item}
+                    send "{@p} 총 스킨 설정 완료." to player
+                    delete {admin_input::%player%}
+                stop
+
+            if {_mode} contains "HELM_":
+                cancel event
+                set {_item} to event-item
+                if {_item} is not air:
+                    set {_d::*} to split {_mode} at "_"
+                    set {mob::equip::helmet::%{_d::2}%} to {_item}
+                    send "{@p} 헬멧 스킨 설정 완료." to player
+                    delete {admin_input::%player%}
+                stop
+
+            if {_mode} contains "CHEST_":
+                cancel event
+                set {_item} to event-item
+                if {_item} is not air:
+                    set {_d::*} to split {_mode} at "_"
+                    set {mob::equip::chest::%{_d::2}%} to {_item}
+                    send "{@p} 갑옷 스킨 설정 완료." to player
+                    delete {admin_input::%player%}
+                stop
+
+# =========================================
+# [2] 채팅 입력 (HP/DEF)
+# =========================================
+on chat:
+    if {admin_input::%player%} is set:
+        cancel event
+        set {_d::*} to split {admin_input::%player%} at "_"
+
+        if {_d::1} is "HP":
+            set {_v} to message parsed as number
+            if {_v} is not set:
+                send "{@p} 숫자만 입력하세요. (예: 30)" to player
+                delete {admin_input::%player%}
+                stop
+            if tk_is_bad_number({_v}) is true:
+                send "{@p} 숫자만 입력하세요. (예: 30)" to player
+                delete {admin_input::%player%}
+                stop
+
+            set {_v} to tk_safe_number({_v}, 1, 1024, 20)
+            set {mob::hp::%{_d::2}%} to {_v}
+
+            send "{@p} 체력 설정 완료: %{_v}%." to player
+            delete {admin_input::%player%}
+            stop
+
+        if {_d::1} is "DEF":
+            set {_v2} to message parsed as number
+            if {_v2} is not set:
+                send "{@p} 숫자만 입력하세요. (예: 30)" to player
+                delete {admin_input::%player%}
+                stop
+            if tk_is_bad_number({_v2}) is true:
+                send "{@p} 숫자만 입력하세요. (예: 30)" to player
+                delete {admin_input::%player%}
+                stop
+
+            set {_v2} to tk_safe_number({_v2}, 0, 500, 0)
+            set {mob::def::%{_d::2}%} to {_v2}
+
+            send "{@p} 방어력 설정 완료: %{_v2}%." to player
+            delete {admin_input::%player%}
+            stop
+
+# =========================================
+# [3] 방어(몹 피격)
+# - {mob::def::<TYPE>}는 방어 수치(0~500)
+# - 관통력: 공격자 무기 로어 "방어구 관통력" 파싱
+# =========================================
+on damage:
+    if tk_is_tk_mob(victim) is true:
+        set {_type} to tk_get_tk_mob_type(victim)
+
+        set {_armor} to 0
+        if {mob::def::%{_type}%} is set:
+            set {_armor} to {mob::def::%{_type}%}
+
+        # 구버전 호환: 0.6 같은 값이면 60으로 간주
+        if {_armor} <= 1:
+            if {_armor} > 0:
+                set {_armor} to {_armor} * 100
+
+        set {_armor} to tk_safe_number({_armor}, 0, 500, 0)
+
+        set {_pen} to 0
+        if attacker is player:
+            set {_pen} to tk_get_pen_from_item(tool of attacker)
+        set {_pen} to tk_safe_number({_pen}, 0, 0.95, 0)
+
+        set {_eff} to {_armor} * (1 - {_pen})
+        set {_eff} to tk_safe_number({_eff}, 0, 500, 0)
+
+        set {_k} to 60
+        set {_den} to {_eff} + {_k}
+        if {_den} <= 0:
+            set {_red} to 0
+        else:
+            set {_red} to {_eff} / {_den}
+
+        set {_red} to tk_safe_number({_red}, 0, 0.9, 0)
+
+        set {_mul} to 1 - {_red}
+        set {_mul} to tk_safe_number({_mul}, 0.05, 1, 1)
+
+        set {_dmg} to damage * {_mul}
+        if tk_is_bad_number({_dmg}) is true:
+            set {_dmg} to 0
+        if {_dmg} < 0:
+            set {_dmg} to 0
+        if {_dmg} > 0:
+            if {_dmg} < 0.1:
+                set {_dmg} to 0.1
+
+        set damage to {_dmg}
+
+# =========================================
+# [4] 가짜 총 공격 AI (Raid 전용)
+# - TACZ 직접 발사 X, 수치로 시뮬레이션
+# =========================================
+every 5 ticks:
+    loop all living entities:
+        set {_m} to loop-entity
+        if tk_is_tk_mob({_m}) is true:
+            set {_mid} to uuid of {_m}
+            set {_type} to tk_get_tk_mob_type({_m})
+
+            set {_rate} to {mob::gun::rate::%{_type}%}
+            set {_rate} to tk_safe_number({_rate}, 1, 200, 30)
+
+            set {_accBase} to {mob::gun::accuracy::%{_type}%}
+            set {_accBase} to tk_safe_number({_accBase}, 0, 100, 50)
+
+            set {_dmgBase} to {mob::gun::damage::%{_type}%}
+            set {_dmgBase} to tk_safe_number({_dmgBase}, 0, 500, 4)
+
+            set {_penBase} to {mob::gun::pen::%{_type}%}
+            set {_penBase} to tk_safe_number({_penBase}, 0, 0.95, 0)
+
+            set {_penChance} to {mob::gun::penchance::%{_type}%}
+            if {_penChance} is not set:
+                set {_penChance} to {_penBase} * 100
+            set {_penChance} to tk_safe_number({_penChance}, 0, 100, 0)
+
+            set {_spd} to {mob::gun::speed::%{_type}%}
+            set {_spd} to tk_safe_number({_spd}, 1, 200, 60)
+
+            set {_mag} to {mob::gun::mag::%{_type}%}
+            set {_mag} to tk_safe_number({_mag}, 1, 200, 20)
+
+            set {_reload} to {mob::gun::reload::%{_type}%}
+            set {_reload} to tk_safe_number({_reload}, 0, 400, 60)
+
+            # --- 재장전 처리 ---
+            if {mob::gun::reloadcd::%{_mid}%} is set:
+                remove 5 from {mob::gun::reloadcd::%{_mid}%}
+                if {mob::gun::reloadcd::%{_mid}%} > 0:
+                    continue
+                delete {mob::gun::reloadcd::%{_mid}%}
+                set {mob::gun::ammo::%{_mid}%} to {_mag}
+
+            if {mob::gun::ammo::%{_mid}%} is not set:
+                set {mob::gun::ammo::%{_mid}%} to {_mag}
+
+            if {mob::gun::ammo::%{_mid}%} <= 0:
+                if {_reload} > 0:
+                    set {mob::gun::reloadcd::%{_mid}%} to {_reload}
+                set {mob::gun::ammo::%{_mid}%} to 0
+                continue
+
+            # --- 쿨타임 감소 ---
+            if {mob::gun::cool::%{_mid}%} is set:
+                remove 5 from {mob::gun::cool::%{_mid}%}
+                if {mob::gun::cool::%{_mid}%} > 0:
+                    continue
+                delete {mob::gun::cool::%{_mid}%}
+
+            # --- 타겟 ---
+            set {_t} to tk_find_raid_target({_m}, {@GUN_RANGE})
+            if {_t} is not set:
+                continue
+
+            if {in_hideout::%{_t}%} is true:
+                continue
+            if {in_raid::%{_t}%} is not true:
+                continue
+            if distance between {_m} and {_t} > {@GUN_RANGE}:
+                continue
+
+            if {mob::weapon::%{_type}%} is set:
+                set {_m}'s tool to {mob::weapon::%{_type}%}
+
+            set {mob::gun::cool::%{_mid}%} to {_rate}
+
+            # --- 명중 판정 ---
+            set {_dist} to distance between {_m} and {_t}
+
+            set {_penalty} to 0
+            if {_dist} > 15:
+                add 15 to {_penalty}
+            else if {_dist} > 10:
+                add 10 to {_penalty}
+            else if {_dist} > 5:
+                add 5 to {_penalty}
+
+            if {_dist} > 8:
+                set {_spdPen} to (60 - {_spd}) / 4
+                if {_spdPen} < 0:
+                    set {_spdPen} to 0
+                add {_spdPen} to {_penalty}
+
+            set {_acc} to {_accBase} - {_penalty}
+            set {_acc} to tk_safe_number({_acc}, 5, 100, 5)
+
+            if chance of {_acc}%:
+                remove 1 from {mob::gun::ammo::%{_mid}%}
+                if {mob::gun::ammo::%{_mid}%} < 0:
+                    set {mob::gun::ammo::%{_mid}%} to 0
+
+                set {_penMul} to 1
+                if {_dist} > 15:
+                    set {_penMul} to 0.4
+                else if {_dist} > 10:
+                    set {_penMul} to 0.6
+                else if {_dist} > 5:
+                    set {_penMul} to 0.8
+
+                set {_pen} to {_penBase} * {_penMul}
+                set {_pen} to tk_safe_number({_pen}, 0, 0.95, 0)
+
+                if chance of {_penChance}%:
+                    set {_penOk} to true
+                else:
+                    set {_penOk} to false
+                    set {_pen} to 0
+
+                set {_armor} to 0
+                if {_t}'s chestplate is set:
+                    add 0.3 to {_armor}
+                if {_t}'s helmet is set:
+                    add 0.1 to {_armor}
+                set {_armor} to tk_safe_number({_armor}, 0, 1, 0)
+
+                set {_ammoType} to {mob::gun::ammo::%{_type}%}
+                if {_ammoType} is "HP":
+                    subtract 0.15 from {_pen}
+                else if {_ammoType} is "AP":
+                    add 0.2 to {_pen}
+                set {_pen} to tk_safe_number({_pen}, 0, 0.95, 0)
+
+                set {_reduce} to {_armor} - {_pen}
+                if {_reduce} < 0:
+                    set {_reduce} to 0
+                set {_reduce} to tk_safe_number({_reduce}, 0, 1, 0)
+
+                set {_final} to {_dmgBase} * (1 - {_reduce})
+                if tk_is_bad_number({_final}) is true:
+                    set {_final} to 0
+                if {_final} < 0:
+                    set {_final} to 0
+                if {_final} > 0:
+                    if {_final} < 0.1:
+                        set {_final} to 0.1
+
+                damage {_t} by {_final}
+
+                if {_t}'s chestplate is set:
+                    if {_penOk} is true:
+                        damage {_t}'s chestplate by 2
+                    else:
+                        damage {_t}'s chestplate by 1
+                if {_t}'s helmet is set:
+                    if {_penOk} is true:
+                        damage {_t}'s helmet by 2
+                    else:
+                        damage {_t}'s helmet by 1
+
+# =========================================
+# [5] 전리품 상자(블록) 구현
+#
+# {tk_crate::%key%::type} = text
+# {tk_crate::%key%::ttl}  = number (초)
+# {tk_crate::%key%::slot::1..9} = item
+# =========================================
+
+function tk_make_armor_item(t: text) :: item:
+    if {_t} is "BOSS":
+        return iron chestplate named "&6[T5] 바디아머"
+    return iron chestplate named "&e[T4] 바디아머"
+
+function tk_make_gunpart_item(t: text) :: item:
+    return blaze rod named "총기 부품"
+
+function tk_make_bag_item(t: text) :: item:
+    if {_t} is "BOSS":
+        return chest named "&6[PMC_BACKPACK]"
+    return chest named "&e[SCAV_BACKPACK]"
+
+function tk_spawn_loot_crate_at(l: location, t: text):
+    set {_type} to tk_norm_type({_t})
+    set {_loc} to tk_find_crate_spot({_l})
+    set {_key} to tk_loc_key({_loc})
+
+    # 이미 상자 있으면 스킵
+    if {tk_crate::%{_key}%::type} is set:
+        stop
+
+    set block at {_loc} to chest
+
+    set {tk_crate::%{_key}%::type} to {_type}
+    set {tk_crate::%{_key}%::ttl} to 600
+    set {tk_crate::%{_key}%::loc} to {_loc}
+    # 키 목록( TTL 루프 )
+    add {_key} to {tk_crate_keys::*}
+
+
+    loop 9 times:
+        delete {tk_crate::%{_key}%::slot::%loop-number%}
+
+    # 고정 드랍(확률)
+    if chance of {drop::armor::%{_type}%}%:
+        set {tk_crate::%{_key}%::slot::1} to tk_make_armor_item({_type})
+    if chance of {drop::gun::%{_type}%}%:
+        set {tk_crate::%{_key}%::slot::2} to tk_make_gunpart_item({_type})
+    if chance of {drop::bag::%{_type}%}%:
+        set {tk_crate::%{_key}%::slot::3} to tk_make_bag_item({_type})
+
+    # 레지스트리 기반 랜덤 채우기 (남은 슬롯 중 2~5개)
+    set {_cnt} to random integer between 2 and 5
+    loop {_cnt} times:
+        set {_pick} to tk_pick_reg_item({_type})
+        if {_pick} is not air:
+            loop 9 times:
+                if {tk_crate::%{_key}%::slot::%loop-number-1%} is not set:
+                    set {tk_crate::%{_key}%::slot::%loop-number-1%} to {_pick}
+                    stop loop
+
+function tk_open_loot_gui(p: player, key: text):
+    if {tk_crate::%{_key}%::type} is not set:
+        stop
+
+    set {_gui} to chest inventory with 1 row named "&8[ 전리품 상자 ]"
+    loop 9 times:
+        if {tk_crate::%{_key}%::slot::%loop-number%} is set:
+            set slot (loop-number - 1) of {_gui} to {tk_crate::%{_key}%::slot::%loop-number%}
+        else:
+            set slot (loop-number - 1) of {_gui} to air
+
+    set {tk_opencrate::%{_p}%} to {_key}
+    open {_gui} to {_p}
+
+function tk_cleanup_crate_if_empty(key: text):
+    if {tk_crate::%{_key}%::type} is not set:
+        stop
+
+    set {_empty} to true
+    loop 9 times:
+        if {tk_crate::%{_key}%::slot::%loop-number%} is set:
+            set {_empty} to false
+
+    if {_empty} is true:
+        if {tk_crate::%{_key}%::loc} is set:
+            set block at {tk_crate::%{_key}%::loc} to air
+        delete {tk_crate::%{_key}%::*}
+        remove {_key} from {tk_crate_keys::*}
+
+# =========================================
+# [6-1] 전리품 상자 파괴 방지(데이터 꼬임 방지)
+# =========================================
+on break:
+    if block is not set:
+        stop
+    set {_bt} to "%type of block%"
+    if "%{_bt}%" contains "chest":
+        set {_key} to tk_loc_key(location of block)
+        if {tk_crate::%{_key}%::type} is set:
+            cancel event
+            send "{@p} 전리품 상자는 파괴할 수 없습니다." to player
+            stop
+
+# =========================================
+# [6] 상자 우클릭 -> 전리품 GUI (자동 팝업 아님)
+# =========================================
+on right click:
+    if clicked block is not set:
+        stop
+
+    set {_bt} to "%type of clicked block%"
+    if "%{_bt}%" contains "chest":
+        set {_key} to tk_loc_key(location of clicked block)
+        if {tk_crate::%{_key}%::type} is set:
+            cancel event
+            tk_open_loot_gui(player, {_key})
+
+# =========================================
+# [6.2] 전리품 GUI 클릭 -> 획득 (가방 변수 직접쓰기 금지 → give)
+# =========================================
+on inventory click:
+    if name of event-inventory is "&8[ 전리품 상자 ]":
+        cancel event
+
+        if {tk_opencrate::%player%} is not set:
+            stop
+        set {_key} to {tk_opencrate::%player%}
+        if {tk_crate::%{_key}%::type} is not set:
+            delete {tk_opencrate::%player%}
+            stop
+
+        set {_s} to index of event-slot
+        if {_s} < 0:
+            stop
+        if {_s} > 8:
+            stop
+
+        set {_idx} to {_s} + 1
+        if {tk_crate::%{_key}%::slot::%{_idx}%} is not set:
+            stop
+
+        set {_it} to {tk_crate::%{_key}%::slot::%{_idx}%}
+        give {_it} to player
+
+        delete {tk_crate::%{_key}%::slot::%{_idx}%}
+        set slot {_s} of event-inventory to air
+
+        tk_cleanup_crate_if_empty({_key})
+        stop
+
+on inventory close:
+    if {tk_opencrate::%player%} is set:
+        delete {tk_opencrate::%player%}
+
+# =========================================
+# [6.5] 전리품 상자 TTL/청소
+# - {tk_crate_keys::*}를 기준으로 감산(순정/보수 환경 호환)
+# =========================================
+every 20 ticks:
+    loop {tk_crate_keys::*}:
+        set {_key} to "%loop-value%"
+        if {tk_crate::%{_key}%::ttl} is set:
+            remove 1 from {tk_crate::%{_key}%::ttl}
+            if {tk_crate::%{_key}%::ttl} <= 0:
+                if {tk_crate::%{_key}%::loc} is set:
+                    set block at {tk_crate::%{_key}%::loc} to air
+                delete {tk_crate::%{_key}%::*}
+                remove {_key} from {tk_crate_keys::*}
+
+# =========================================
+# [7] 사망 처리 (몹)
+# - 몹 직접 드랍 X
+# - 바닥에 체스트 상자 생성 (전투 중 GUI 자동오픈 없음)
+# =========================================
+on death:
+    if tk_is_tk_mob(victim) is true:
+        # drops 제거(호환)
+        loop drops:
+            remove loop-item from drops
+
+        set {_vid} to uuid of victim
+        delete {mob::gun::cool::%{_vid}%}
+        delete {mob::init::%{_vid}%}
+        delete {mob::gun::ammo::%{_vid}%}
+        delete {mob::gun::reloadcd::%{_vid}%}
+
+        set {_type} to tk_get_tk_mob_type(victim)
+        set {_loc} to tk_find_crate_spot(location of victim)
+        set {_key} to tk_loc_key({_loc})
+
+        tk_spawn_loot_crate_at({_loc}, {_type})
+
+
+# =========================================
+# [8] OP 전용 전리품 설정창
+# - 등록: 손에 든 아이템
+# - 수정: 리스트 클릭 후 채팅으로 가중치 입력
+# - 삭제: 삭제 토글 ON 후 리스트 클릭
+# =========================================
+
+function tk_open_loot_admin_main(p: player):
+    set {_gui} to chest inventory with 3 rows named "&8[ 전리품 설정 ]"
+    set slot 11 of {_gui} to zombie head named "&2 SCAV" with lore "&7SCAV 전리품"
+    set slot 13 of {_gui} to skeleton skull named "&e AMC" with lore "&7AMC 전리품"
+    set slot 15 of {_gui} to wither skeleton skull named "&4 BOSS" with lore "&7BOSS 전리품"
+    set slot 26 of {_gui} to arrow named "&c 닫기"
+    open {_gui} to {_p}
+
+function tk_open_loot_admin_list(p: player, t: text):
+    set {_tt} to tk_norm_type({_t})
+    set {_gui} to chest inventory with 6 rows named "&8[ 전리품: %{_tt}% ]"
+
+    # 버튼
+    set slot 45 of {_gui} to anvil named "&a등록" with lore "&7손에 든 아이템 등록" and "&7(클릭 후 채팅으로 가중치 입력)"
+    if {mobloot_admin::%{_p}%::delmode} is true:
+        set slot 47 of {_gui} to redstone torch named "&c삭제 ON" with lore "&7삭제 모드" and "&7(토글)"
+    else:
+        set slot 47 of {_gui} to torch named "&a삭제 OFF" with lore "&7삭제 모드" and "&7(토글)"
+    set slot 53 of {_gui} to arrow named "&c뒤로"
+
+    # 리스트(0~44)
+    set {_max} to tk_get_reg_max({_tt})
+    set {_slot} to 0
+    loop {_max} times:
+        set {_i} to loop-number
+        if {_slot} > 44:
+            stop loop
+
+        if {moblootreg::%{_tt}%::%{_i}%::item} is set:
+            set {_it} to {moblootreg::%{_tt}%::%{_i}%::item}
+            set {_w} to {moblootreg::%{_tt}%::%{_i}%::w}
+            if {_w} is not set:
+                set {_w} to 1
+
+            # 어떤 아이템이든 표시 가능
+            set {_show} to {_it} with lore "&7Index: &f%{_i}%" and "&7Weight: &e%{_w}%" and "&8(클릭: 가중치 수정 / 삭제모드면 삭제)"
+            set slot {_slot} of {_gui} to {_show}
+            add 1 to {_slot}
+
+    set {mobloot_admin::%{_p}%::type} to {_tt}
+    open {_gui} to {_p}
+
+on inventory click:
+    if name of event-inventory is "&8[ 전리품 설정 ]":
+        cancel event
+        set {_s} to index of event-slot
+        if {_s} is 26:
+            close player's inventory
+            stop
+        if {_s} is 11:
+            tk_open_loot_admin_list(player, "SCAV")
+            stop
+        if {_s} is 13:
+            tk_open_loot_admin_list(player, "AMC")
+            stop
+        if {_s} is 15:
+            tk_open_loot_admin_list(player, "BOSS")
+            stop
+        stop
+
+    if name of event-inventory contains "&8[ 전리품: ":
+        cancel event
+        if {mobloot_admin::%player%::type} is not set:
+            stop
+        set {_tt} to {mobloot_admin::%player%::type}
+        set {_s} to index of event-slot
+
+        if {_s} is 53:
+            tk_open_loot_admin_main(player)
+            stop
+
+        if {_s} is 47:
+            if {mobloot_admin::%player%::delmode} is true:
+                delete {mobloot_admin::%player%::delmode}
+                send "{@p} 삭제 모드 OFF" to player
+            else:
+                set {mobloot_admin::%player%::delmode} to true
+                send "{@p} 삭제 모드 ON" to player
+            tk_open_loot_admin_list(player, {_tt})
+            stop
+
+        if {_s} is 45:
+            if tool of player is air:
+                send "{@p} 손에 아이템을 들고 등록하세요." to player
+                stop
+            set {mobloot_admin::%player%::pending} to "ADD"
+            set {mobloot_admin::%player%::pendingItem} to tool of player
+            send "{@p} 채팅으로 가중치(확률)를 숫자로 입력하세요. (예: 10)" to player
+            stop
+
+        # 리스트 클릭(0~44)
+        if {_s} < 0:
+            stop
+        if {_s} > 44:
+            stop
+
+        set {_clicked} to slot {_s} of event-inventory
+        if {_clicked} is air:
+            stop
+
+        set {_l::*} to lore of {_clicked}
+        set {_idx} to 0
+        loop {_l::*}:
+            set {_line} to uncolored "%loop-value%"
+            if {_line} contains "Index:":
+                set {_p2::*} to split {_line} at "Index:"
+                if {_p2::2} is set:
+                    set {_idxT} to uncolored "%{_p2::2}%"
+                    set {_idxN} to {_idxT} parsed as number
+                    if {_idxN} is set:
+                        set {_idx} to {_idxN}
+                stop loop
+
+        if {_idx} <= 0:
+            stop
+
+        if {mobloot_admin::%player%::delmode} is true:
+            tk_del_reg_item({_tt}, {_idx})
+            send "{@p} 삭제 완료: %{_tt}% #%{_idx}%" to player
+            tk_open_loot_admin_list(player, {_tt})
+            stop
+
+        set {mobloot_admin::%player%::pending} to "EDIT"
+        set {mobloot_admin::%player%::pendingIndex} to {_idx}
+        send "{@p} 채팅으로 새 가중치(확률)를 숫자로 입력하세요. (예: 25)" to player
+        stop
+
+on chat:
+    if {mobloot_admin::%player%::pending} is set:
+        cancel event
+
+        if {mobloot_admin::%player%::type} is not set:
+            delete {mobloot_admin::%player%::pending}
+            stop
+        set {_tt} to {mobloot_admin::%player%::type}
+
+        set {_w} to message parsed as number
+        if {_w} is not set:
+            send "{@p} 숫자만 입력하세요." to player
+            stop
+
+        set {_w2} to tk_safe_number({_w}, 1, 1000000, 1)
+        set {_mode} to {mobloot_admin::%player%::pending}
+
+        if {_mode} is "ADD":
+            if {mobloot_admin::%player%::pendingItem} is not set:
+                delete {mobloot_admin::%player%::pending}
+                stop
+            tk_add_reg_item({_tt}, {mobloot_admin::%player%::pendingItem}, {_w2})
+            delete {mobloot_admin::%player%::pendingItem}
+            delete {mobloot_admin::%player%::pending}
+            send "{@p} 등록 완료: %{_tt}% (Weight=%{_w2}%)" to player
+            tk_open_loot_admin_list(player, {_tt})
+            stop
+
+        if {_mode} is "EDIT":
+            if {mobloot_admin::%player%::pendingIndex} is not set:
+                delete {mobloot_admin::%player%::pending}
+                stop
+            set {_idx} to {mobloot_admin::%player%::pendingIndex}
+            tk_set_reg_weight({_tt}, {_idx}, {_w2})
+            delete {mobloot_admin::%player%::pendingIndex}
+            delete {mobloot_admin::%player%::pending}
+            send "{@p} 수정 완료: %{_tt}% #%{_idx}% (Weight=%{_w2}%)" to player
+            tk_open_loot_admin_list(player, {_tt})
+            stop
